@@ -10,7 +10,7 @@ use graphile_worker_task_handler::{BatchTaskHandler, TaskHandler};
 use serde::Serialize;
 
 use super::client::WorkerUtils;
-use super::types::RescheduleJobOptions;
+use super::types::{RescheduleJobOptions, WorkerControlState, WorkerPauseUpdate};
 use super::{actions, add, maintenance};
 
 /// A scoped `WorkerUtils` facade that routes operations through a caller-provided executor.
@@ -30,6 +30,21 @@ impl<E> WorkerUtilsWithExecutor<E>
 where
     E: DbExecutorArg,
 {
+    /// Reads the database-wide worker claim gate through the injected executor.
+    pub async fn worker_control_state(
+        &mut self,
+    ) -> Result<WorkerControlState, GraphileWorkerError> {
+        actions::worker_control_state(&self.utils, &mut self.executor).await
+    }
+
+    /// Atomically changes the database-wide worker claim gate through the injected executor.
+    pub async fn set_worker_paused(
+        &mut self,
+        paused: bool,
+    ) -> Result<WorkerPauseUpdate, GraphileWorkerError> {
+        actions::set_worker_paused(&self.utils, &mut self.executor, paused).await
+    }
+
     pub(super) fn new(utils: WorkerUtils, executor: E) -> Self {
         Self { utils, executor }
     }

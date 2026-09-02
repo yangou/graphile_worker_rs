@@ -7,6 +7,7 @@ use graphile_worker_job::Job;
 
 use super::job_query_helpers::{
     get_flag_clause, get_now_clause, get_queue_clause, get_update_queue_clause,
+    get_worker_control_cte,
 };
 use super::task_identifiers::TaskDetails;
 
@@ -38,14 +39,18 @@ pub async fn get_job(
     let jobs = schema.private_table("jobs");
     let queue_clause = get_queue_clause(&schema);
     let update_queue_clause = get_update_queue_clause(&schema, 1, now_param);
+    let worker_control_cte = get_worker_control_cte(&schema);
     let now_clause = get_now_clause(now_param);
 
     let sql = formatdoc!(
         r#"
-            with j as (
+            with {worker_control_cte},
+            j as (
                 select jobs.job_queue_id, jobs.priority, jobs.run_at, jobs.id
                     from {jobs} as jobs
+                    cross join worker_control
                     where jobs.is_available = true
+                    and worker_control.paused = false
                     and run_at <= {now_clause}
                     and task_id = any($2::int[])
                     {queue_clause}

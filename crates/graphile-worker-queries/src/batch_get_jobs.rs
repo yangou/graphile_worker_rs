@@ -6,7 +6,7 @@ use crate::errors::Result;
 use graphile_worker_job::Job;
 
 use super::job_query_helpers::{
-    get_flag_clause, get_now_clause, get_queue_clause, get_update_queue_clause,
+    get_flag_clause, get_now_clause, get_update_queue_clause, get_worker_control_cte,
 };
 use super::task_identifiers::TaskDetails;
 
@@ -37,23 +37,68 @@ pub async fn batch_get_jobs(
         .map(|p| get_flag_clause(flags_to_skip, p))
         .unwrap_or_default();
     let jobs = schema.private_table("jobs");
-    let queue_clause = get_queue_clause(&schema);
+    let job_queues = schema.private_table("job_queues");
     let update_queue_clause = get_update_queue_clause(&schema, 1, now_param);
+    let worker_control_cte = get_worker_control_cte(&schema);
     let now_clause = get_now_clause(now_param);
 
     let sql = formatdoc!(
         r#"
-            with j as (
+            with {worker_control_cte},
+            available_queues as materialized (
+                select job_queues.id
+                    from {job_queues} as job_queues
+                    cross join worker_control
+                    where worker_control.paused = false
+                    and job_queues.is_available = true
+                    for update of job_queues
+                    skip locked
+            ),
+            queued_candidates as materialized (
+                select candidate.id, candidate.priority, candidate.run_at
+                    from available_queues
+                    cross join lateral (
+                        select jobs.id, jobs.priority, jobs.run_at
+                        from {jobs} as jobs
+                        where jobs.job_queue_id = available_queues.id
+                        and jobs.is_available = true
+                        and jobs.run_at <= {now_clause}
+                        and jobs.task_id = any($2::int[])
+                        {flag_clause}
+                        order by jobs.priority asc, jobs.run_at asc, jobs.id asc
+                        limit 1
+                    ) as candidate
+            ),
+            unqueued_candidates as materialized (
+                select jobs.id, jobs.priority, jobs.run_at
+                    from {jobs} as jobs
+                    cross join worker_control
+                    where jobs.is_available = true
+                    and worker_control.paused = false
+                    and jobs.job_queue_id is null
+                    and jobs.run_at <= {now_clause}
+                    and jobs.task_id = any($2::int[])
+                    {flag_clause}
+                    order by jobs.priority asc, jobs.run_at asc, jobs.id asc
+                    limit $3::int
+            ),
+            candidate_ids as materialized (
+                select candidates.id
+                from (
+                    select * from queued_candidates
+                    union all
+                    select * from unqueued_candidates
+                ) as candidates
+                order by candidates.priority asc, candidates.run_at asc, candidates.id asc
+                limit $3::int
+            ),
+            j as (
                 select jobs.job_queue_id, jobs.priority, jobs.run_at, jobs.id
                     from {jobs} as jobs
-                    where jobs.is_available = true
-                    and run_at <= {now_clause}
-                    and task_id = any($2::int[])
-                    {queue_clause}
-                    {flag_clause}
-                    order by priority asc, run_at asc
-                    limit $3::int
+                    inner join candidate_ids on candidate_ids.id = jobs.id
+                    order by jobs.priority asc, jobs.run_at asc, jobs.id asc
                     for update
+                    of jobs
                     skip locked
                 ) {update_queue_clause}
                     update {jobs} as jobs

@@ -215,7 +215,23 @@ let worker = WorkerOptions::default()
 
 Local queue settings are validated against the configured `poll_interval` during
 `init()`. If forbidden flags are configured, the worker ignores the local queue
-configuration.
+configuration. A fetched batch contains at most one job for each non-null named
+queue; unqueued jobs and jobs from different named queues may still fill the
+remaining batch. This preserves named-queue serial execution while jobs wait in
+the process-local queue.
+
+## Database-wide claim pause
+
+Every migrated worker schema contains one claim-control row. Use
+`WorkerUtils::worker_control_state()` to inspect it and
+`WorkerUtils::set_worker_paused(bool)` to pause or resume claims. The same
+operations are available through `WorkerUtilsWithExecutor`, so callers may
+include the state change in their own transaction.
+
+Pause gates claims only. Adding jobs and managing existing rows remain
+available. A claim takes a shared lock on the control row in the same database
+statement that locks jobs, so a successful pause waits for already-started
+claims and prevents later claims from passing the gate.
 
 ## Hooks, plugins, and extensions
 

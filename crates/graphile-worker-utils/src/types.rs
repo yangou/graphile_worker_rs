@@ -4,6 +4,20 @@ use indoc::formatdoc;
 use graphile_worker_queries::errors::GraphileWorkerError;
 use graphile_worker_queries::schema_names::PrivateTable;
 
+/// Current state of the database-wide worker claim gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkerControlState {
+    pub paused: bool,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Atomic result of changing the database-wide worker claim gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkerPauseUpdate {
+    pub previous: WorkerControlState,
+    pub current: WorkerControlState,
+}
+
 /// Types of database cleanup tasks that can be performed on the Graphile Worker schema.
 ///
 /// These tasks help maintain database performance by removing unused records and

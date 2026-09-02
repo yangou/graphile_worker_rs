@@ -1,5 +1,19 @@
 use graphile_worker_database::Schema;
 
+pub fn get_worker_control_cte(schema: &Schema) -> String {
+    let worker_control = schema.private_table("worker_control");
+    format!(
+        r#"
+            worker_control as materialized (
+                select paused
+                from {worker_control}
+                where id = true
+                for share
+            )
+        "#
+    )
+}
+
 pub fn get_flag_clause(flags_to_skip: &[String], param_ord: u8) -> String {
     if !flags_to_skip.is_empty() {
         return format!("and ((flags ?| ${param_ord}::text[]) is not true)");

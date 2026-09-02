@@ -3,7 +3,7 @@ use std::time::Duration;
 use graphile_worker_migrations::MigrateError;
 
 use super::client::WorkerUtils;
-use super::types::{CleanupTask, RescheduleJobOptions};
+use super::types::{CleanupTask, RescheduleJobOptions, WorkerControlState, WorkerPauseUpdate};
 use super::{actions, maintenance};
 use graphile_worker_job::DbJob;
 use graphile_worker_queries::errors::GraphileWorkerError;
@@ -12,6 +12,19 @@ use graphile_worker_recovery::{
 };
 
 impl WorkerUtils {
+    /// Reads the database-wide worker claim gate.
+    pub async fn worker_control_state(&self) -> Result<WorkerControlState, GraphileWorkerError> {
+        actions::worker_control_state(self, &self.database).await
+    }
+
+    /// Atomically changes the database-wide worker claim gate.
+    pub async fn set_worker_paused(
+        &self,
+        paused: bool,
+    ) -> Result<WorkerPauseUpdate, GraphileWorkerError> {
+        actions::set_worker_paused(self, &self.database, paused).await
+    }
+
     /// Removes a job from the queue by its job key.
     ///
     /// Useful for cancelling scheduled jobs that haven't run yet.
