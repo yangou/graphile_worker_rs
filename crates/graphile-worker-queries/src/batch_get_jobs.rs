@@ -46,21 +46,17 @@ pub async fn batch_get_jobs(
         r#"
             with {worker_control_cte},
             available_queues as materialized (
-                select job_queues.id
+                select
+                    job_queues.id,
+                    candidate.id as candidate_id,
+                    candidate.priority as candidate_priority,
+                    candidate.run_at as candidate_run_at
                     from {job_queues} as job_queues
                     cross join worker_control
-                    where worker_control.paused = false
-                    and job_queues.is_available = true
-                    for update of job_queues
-                    skip locked
-            ),
-            queued_candidates as materialized (
-                select candidate.id, candidate.priority, candidate.run_at
-                    from available_queues
                     cross join lateral (
                         select jobs.id, jobs.priority, jobs.run_at
                         from {jobs} as jobs
-                        where jobs.job_queue_id = available_queues.id
+                        where jobs.job_queue_id = job_queues.id
                         and jobs.is_available = true
                         and jobs.run_at <= {now_clause}
                         and jobs.task_id = any($2::int[])
@@ -68,6 +64,19 @@ pub async fn batch_get_jobs(
                         order by jobs.priority asc, jobs.run_at asc, jobs.id asc
                         limit 1
                     ) as candidate
+                    where worker_control.paused = false
+                    and job_queues.is_available = true
+                    order by candidate.priority asc, candidate.run_at asc, candidate.id asc
+                    limit $3::int
+                    for update of job_queues
+                    skip locked
+            ),
+            queued_candidates as materialized (
+                select
+                    available_queues.candidate_id as id,
+                    available_queues.candidate_priority as priority,
+                    available_queues.candidate_run_at as run_at
+                    from available_queues
             ),
             unqueued_candidates as materialized (
                 select jobs.id, jobs.priority, jobs.run_at
@@ -81,6 +90,8 @@ pub async fn batch_get_jobs(
                     {flag_clause}
                     order by jobs.priority asc, jobs.run_at asc, jobs.id asc
                     limit $3::int
+                    for update of jobs
+                    skip locked
             ),
             candidate_ids as materialized (
                 select candidates.id
@@ -96,6 +107,12 @@ pub async fn batch_get_jobs(
                 select jobs.job_queue_id, jobs.priority, jobs.run_at, jobs.id
                     from {jobs} as jobs
                     inner join candidate_ids on candidate_ids.id = jobs.id
+                    cross join worker_control
+                    where jobs.is_available = true
+                    and worker_control.paused = false
+                    and jobs.run_at <= {now_clause}
+                    and jobs.task_id = any($2::int[])
+                    {flag_clause}
                     order by jobs.priority asc, jobs.run_at asc, jobs.id asc
                     for update
                     of jobs

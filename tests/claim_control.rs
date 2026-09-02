@@ -111,6 +111,138 @@ async fn batch_claims_at_most_one_job_per_named_queue() {
 }
 
 #[tokio::test]
+async fn batch_claim_locks_only_named_queues_it_can_return() {
+    with_test_db(|test_db| async move {
+        let utils = test_db.worker_utils();
+        utils.migrate().await.expect("Failed to migrate");
+
+        let task_details = get_tasks_details(
+            &test_db.test_pool,
+            &Schema::default(),
+            vec![TASK.to_string()],
+        )
+        .await
+        .expect("Failed to register task");
+
+        let now = Utc::now();
+        for queue_name in [
+            "bounded-queue-one",
+            "bounded-queue-two",
+            "bounded-queue-three",
+        ] {
+            let spec = JobSpecBuilder::new()
+                .queue_name(queue_name)
+                .run_at(now)
+                .build();
+            utils
+                .add_raw_job(TASK, json!({ "queue": queue_name }), spec)
+                .await
+                .expect("Failed to add named-queue job");
+        }
+
+        let mut first_tx = test_db
+            .test_pool
+            .begin()
+            .await
+            .expect("Failed to begin first claim transaction");
+        let first = batch_get_jobs(
+            &mut first_tx,
+            &task_details,
+            &Schema::default(),
+            "bounded-queue-worker-one",
+            &[],
+            1,
+            Some(now + chrono::Duration::seconds(1)),
+        )
+        .await
+        .expect("Failed to claim first named queue");
+        assert_eq!(first.len(), 1);
+
+        let second = batch_get_jobs(
+            &test_db.test_pool,
+            &task_details,
+            &Schema::default(),
+            "bounded-queue-worker-two",
+            &[],
+            1,
+            Some(now + chrono::Duration::seconds(1)),
+        )
+        .await
+        .expect("A concurrent claim should reach another named queue");
+        assert_eq!(second.len(), 1);
+        assert_ne!(first[0].id(), second[0].id());
+
+        first_tx
+            .rollback()
+            .await
+            .expect("Failed to roll back first claim");
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn batch_claim_backfills_past_locked_unqueued_jobs() {
+    with_test_db(|test_db| async move {
+        let utils = test_db.worker_utils();
+        utils.migrate().await.expect("Failed to migrate");
+
+        let task_details = get_tasks_details(
+            &test_db.test_pool,
+            &Schema::default(),
+            vec![TASK.to_string()],
+        )
+        .await
+        .expect("Failed to register task");
+
+        let now = Utc::now();
+        let spec = JobSpecBuilder::new().run_at(now).build();
+        let first = utils
+            .add_raw_job(TASK, json!({ "n": 1 }), spec.clone())
+            .await
+            .expect("Failed to add first unqueued job");
+        utils
+            .add_raw_job(TASK, json!({ "n": 2 }), spec.clone())
+            .await
+            .expect("Failed to add second unqueued job");
+        utils
+            .add_raw_job(TASK, json!({ "n": 3 }), spec)
+            .await
+            .expect("Failed to add third unqueued job");
+
+        let mut blocker = test_db
+            .test_pool
+            .begin()
+            .await
+            .expect("Failed to begin blocker transaction");
+        sqlx::query("SELECT id FROM graphile_worker._private_jobs WHERE id = $1 FOR UPDATE")
+            .bind(first.id())
+            .fetch_one(&mut *blocker)
+            .await
+            .expect("Failed to lock first unqueued job");
+
+        let claimed = batch_get_jobs(
+            &test_db.test_pool,
+            &task_details,
+            &Schema::default(),
+            "unqueued-backfill-worker",
+            &[],
+            2,
+            Some(now + chrono::Duration::seconds(1)),
+        )
+        .await
+        .expect("Failed to claim past locked unqueued job");
+        assert_eq!(claimed.len(), 2);
+        assert!(claimed.iter().all(|job| job.id() != first.id()));
+
+        blocker
+            .rollback()
+            .await
+            .expect("Failed to roll back blocker transaction");
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn pause_and_claim_share_one_atomic_row_lock_handshake() {
     with_test_db(|test_db| async move {
         let utils = test_db.worker_utils();
