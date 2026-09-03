@@ -181,9 +181,7 @@ pub fn claim_queue_jobs_sql(schema: &Schema) -> String {
                 and jobs.run_at <= coalesce($6::timestamptz, now())
                 and (cardinality($5::text[]) = 0 or (jobs.flags ?| $5::text[]) is not true)
                 order by jobs.run_at, jobs.priority, jobs.id
-                limit $3::int
-                for update of jobs
-                skip locked
+                limit ($3::bigint * 2)
             ),
             candidate_ids as materialized (
                 select candidates.id
@@ -193,7 +191,7 @@ pub fn claim_queue_jobs_sql(schema: &Schema) -> String {
                     select * from unqueued_candidates
                 ) as candidates
                 order by candidates.run_at, candidates.priority, candidates.id
-                limit $3::int
+                limit ($3::bigint * 2)
             ),
             selected as materialized (
                 select jobs.id, jobs.job_queue_id

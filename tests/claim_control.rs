@@ -652,6 +652,94 @@ async fn unkeyed_claim_stays_bounded_under_row_contention() {
 }
 
 #[tokio::test]
+async fn mixed_claim_does_not_lock_discarded_unkeyed_candidates() {
+    with_test_db(|test_db| async move {
+        let utils = test_db.worker_utils();
+        utils.migrate().await.expect("Failed to migrate");
+
+        let task_details = get_tasks_details(
+            &test_db.test_pool,
+            &Schema::default(),
+            vec![TASK.to_string()],
+        )
+        .await
+        .expect("Failed to register task");
+        let task_id = task_details.get_id(TASK).expect("registered task id");
+        let now = Utc::now();
+        for queue_name in ["lock-budget-one", "lock-budget-two"] {
+            utils
+                .add_raw_job(
+                    TASK,
+                    json!({ "queue": queue_name }),
+                    JobSpecBuilder::new()
+                        .queue_name(queue_name)
+                        .run_at(now)
+                        .build(),
+                )
+                .await
+                .expect("Failed to add keyed job");
+        }
+        let mut unkeyed_ids = Vec::new();
+        for n in 1..=2 {
+            let job = utils
+                .add_raw_job(
+                    TASK,
+                    json!({ "unkeyed": n }),
+                    JobSpecBuilder::new()
+                        .run_at(now + chrono::Duration::seconds(1))
+                        .build(),
+                )
+                .await
+                .expect("Failed to add unkeyed job");
+            unkeyed_ids.push(*job.id());
+        }
+
+        let claim_tx = test_db.database.begin().await.expect("begin mixed claim");
+        assert!(
+            !lock_worker_control(&claim_tx, Schema::default())
+                .await
+                .expect("read pause control")
+                .paused
+        );
+        let claimed = claim_queue_jobs(
+            &claim_tx,
+            Schema::default(),
+            "lock-budget-worker",
+            task_id,
+            TASK,
+            &[],
+            2,
+            None,
+            Some(now + chrono::Duration::seconds(2)),
+        )
+        .await
+        .expect("claim mixed candidates");
+        assert_eq!(claimed.jobs.len(), 2);
+        assert!(
+            claimed.jobs.iter().all(|job| job.job_queue_id().is_some()),
+            "the two older keyed heads should win the result batch"
+        );
+
+        let mut lock_probe = test_db
+            .test_pool
+            .begin()
+            .await
+            .expect("begin discarded-candidate probe");
+        sqlx::query(
+            "SELECT id FROM graphile_worker._private_jobs \
+             WHERE id = ANY($1) FOR UPDATE NOWAIT",
+        )
+        .bind(&unkeyed_ids)
+        .fetch_all(&mut *lock_probe)
+        .await
+        .expect("discarded unkeyed candidates must not consume the job-row lock budget");
+        lock_probe.rollback().await.expect("rollback lock probe");
+        drop(claim_tx);
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn pause_and_claim_share_one_atomic_row_lock_handshake() {
     with_test_db(|test_db| async move {
         let utils = test_db.worker_utils();
