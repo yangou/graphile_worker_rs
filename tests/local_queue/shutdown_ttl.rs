@@ -293,6 +293,10 @@ async fn shutdown_returns_jobs_from_a_claim_that_was_already_in_flight() {
 
         worker.request_shutdown();
         sleep(Duration::from_millis(50)).await;
+        assert!(
+            !worker_fut.is_finished(),
+            "Worker must wait for the single in-flight release to return claimed jobs"
+        );
         blocker.commit().await.expect("Failed to release claim");
 
         tokio::time::timeout(Duration::from_secs(5), worker_fut)

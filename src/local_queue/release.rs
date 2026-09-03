@@ -78,6 +78,11 @@ impl LocalQueue {
     }
 
     pub async fn release(&self) -> Result<(), LocalQueueError> {
+        // Shutdown reaches LocalQueue through both its signal task and the
+        // runner lifecycle. Join those callers so none can return before the
+        // one release operation has returned every accepted job.
+        let _release = self.0.release_lock.lock().await;
+
         let mut mode = self.0.mode.write().await;
         if *mode == LocalQueueMode::Released {
             return Ok(());
