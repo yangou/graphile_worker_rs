@@ -587,7 +587,7 @@ async fn batch_claim_locks_only_named_queues_it_can_return() {
 }
 
 #[tokio::test]
-async fn unkeyed_claim_stays_bounded_under_row_contention() {
+async fn unkeyed_claim_skips_a_locked_row_within_its_quota_sized_window() {
     with_test_db(|test_db| async move {
         let utils = test_db.worker_utils();
         utils.migrate().await.expect("Failed to migrate");
@@ -607,7 +607,7 @@ async fn unkeyed_claim_stays_bounded_under_row_contention() {
             .add_raw_job(TASK, json!({ "n": 1 }), spec.clone())
             .await
             .expect("Failed to add first unqueued job");
-        utils
+        let second = utils
             .add_raw_job(TASK, json!({ "n": 2 }), spec.clone())
             .await
             .expect("Failed to add second unqueued job");
@@ -636,12 +636,8 @@ async fn unkeyed_claim_stays_bounded_under_row_contention() {
             Some(now + chrono::Duration::seconds(1)),
         )
         .await;
-        assert_eq!(
-            claimed.jobs.len(),
-            2,
-            "a locked first row must not consume the bounded unkeyed claim window"
-        );
-        assert!(claimed.jobs.iter().all(|job| job.id() != first.id()));
+        assert_eq!(claimed.jobs.len(), 1);
+        assert_eq!(claimed.jobs[0].id(), second.id());
 
         blocker
             .rollback()
