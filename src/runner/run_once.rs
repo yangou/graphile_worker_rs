@@ -49,8 +49,11 @@ impl Worker {
                             }
                             info!(job_id, "Job has queue, fetching another job");
                             runner.claim_coordinator.restart_task_scan(task_id).await;
-                            let new_job =
-                                runner.claim_coordinator.claim_one().await.unwrap_or(None);
+                            let new_job = runner
+                                .claim_coordinator
+                                .claim_one_until_shutdown(runner.shutdown_signal.clone())
+                                .await
+                                .unwrap_or(None);
                             let Some(new_job) = new_job else {
                                 break;
                             };

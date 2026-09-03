@@ -2,7 +2,6 @@ mod hooks;
 
 use std::sync::Arc;
 
-use futures::FutureExt;
 use graphile_worker_job::Job;
 use graphile_worker_lifecycle_hooks::JobFetchContext;
 use tracing::{error, trace};
@@ -34,17 +33,14 @@ pub(super) async fn process_one_job(
     worker: &WorkerRunner,
     source: JobSignalSource,
 ) -> Result<Option<Job>, ProcessJobError> {
-    let claim = worker.claim_coordinator.claim_one().fuse();
-    let shutdown = worker.shutdown_signal.clone().fuse();
-    futures::pin_mut!(claim, shutdown);
-
-    let job = futures::select_biased! {
-        result = claim => result.map_err(|e| {
+    let job = worker
+        .claim_coordinator
+        .claim_one_until_shutdown(worker.shutdown_signal.clone())
+        .await
+        .map_err(|e| {
             error!("Could not get job : {:?}", e);
             e
-        })?,
-        _ = shutdown => return Ok(None),
-    };
+        })?;
     match job {
         Some(job) => {
             let job = Arc::new(job);

@@ -2,12 +2,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::Utc;
+use futures::FutureExt;
 use graphile_worker_database::{Database, Schema};
 use graphile_worker_job::Job;
 use graphile_worker_queries::claim_queue_jobs::{claim_queue_jobs, lock_worker_control};
 use graphile_worker_queries::errors::Result;
 use graphile_worker_queries::task_identifiers::SharedTaskDetails;
 use graphile_worker_runtime as runtime;
+use graphile_worker_shutdown_signal::ShutdownSignal;
 
 #[derive(Debug)]
 pub(crate) struct QueueJobs {
@@ -59,10 +61,23 @@ impl ClaimCoordinator {
         })
     }
 
-    pub(crate) async fn claim_one(&self) -> Result<Option<Job>> {
+    pub(crate) async fn claim_one_until_shutdown(
+        &self,
+        shutdown: ShutdownSignal,
+    ) -> Result<Option<Job>> {
+        self.claim_one_with_shutdown(Some(shutdown)).await
+    }
+
+    async fn claim_one_with_shutdown(
+        &self,
+        shutdown: Option<ShutdownSignal>,
+    ) -> Result<Option<Job>> {
         let queue_count = self.task_details.read().await.entries().len();
         for _ in 0..queue_count {
-            match self.claim_wave(1).await? {
+            let Some(wave) = self.claim_wave_with_shutdown(1, shutdown.clone()).await? else {
+                return Ok(None);
+            };
+            match wave {
                 ClaimWave::Paused => return Ok(None),
                 ClaimWave::Claimed(queues) => {
                     if let Some(job) = queues.into_iter().find_map(|queue| {
@@ -89,22 +104,44 @@ impl ClaimCoordinator {
     }
 
     pub(crate) async fn claim_wave(&self, capacity: usize) -> Result<ClaimWave> {
+        Ok(self
+            .claim_wave_with_shutdown(capacity, None)
+            .await?
+            .expect("a claim wave without a shutdown signal cannot be cancelled"))
+    }
+
+    async fn claim_wave_with_shutdown(
+        &self,
+        capacity: usize,
+        shutdown: Option<ShutdownSignal>,
+    ) -> Result<Option<ClaimWave>> {
         if capacity == 0 {
-            return Ok(ClaimWave::Claimed(Vec::new()));
+            return Ok(Some(ClaimWave::Claimed(Vec::new())));
         }
 
         let mut tasks = self.task_details.read().await.entries();
         tasks.sort_by(|left, right| left.1.cmp(&right.1));
         if tasks.is_empty() {
-            return Ok(ClaimWave::Claimed(Vec::new()));
+            return Ok(Some(ClaimWave::Claimed(Vec::new())));
         }
 
         let mut state = self.state.lock().await;
         let allocation = allocate_quotas(tasks.len(), capacity, state.queue_rotation);
         let tx = self.database.begin().await?;
-        if lock_worker_control(&tx, self.schema.clone()).await?.paused {
+        let control = if let Some(shutdown) = shutdown {
+            let lock_control = lock_worker_control(&tx, self.schema.clone()).fuse();
+            let shutdown = shutdown.fuse();
+            futures::pin_mut!(lock_control, shutdown);
+            futures::select_biased! {
+                result = lock_control => result?,
+                _ = shutdown => return Ok(None),
+            }
+        } else {
+            lock_worker_control(&tx, self.schema.clone()).await?
+        };
+        if control.paused {
             tx.commit().await?;
-            return Ok(ClaimWave::Paused);
+            return Ok(Some(ClaimWave::Paused));
         }
 
         let now = self.use_local_time.then(Utc::now);
@@ -137,7 +174,7 @@ impl ClaimCoordinator {
             state.ordering_cursors.insert(task_id, cursor);
         }
         state.queue_rotation = next_rotation(tasks.len(), capacity, state.queue_rotation);
-        Ok(ClaimWave::Claimed(claimed))
+        Ok(Some(ClaimWave::Claimed(claimed)))
     }
 }
 

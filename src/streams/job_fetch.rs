@@ -1,4 +1,4 @@
-use futures::{FutureExt, Stream};
+use futures::Stream;
 use graphile_worker_database::{Database, Schema};
 use graphile_worker_shutdown_signal::ShutdownSignal;
 use tracing::error;
@@ -58,12 +58,16 @@ pub(crate) fn job_stream_from_coordinator(
 ) -> impl Stream<Item = Job> {
     futures::stream::unfold((), move |()| {
         let coordinator = coordinator.clone();
+        let shutdown_signal = shutdown_signal.clone();
 
         let job_fut = async move {
-            let job = coordinator.claim_one().await.map_err(|e| {
-                error!("Could not get job : {:?}", e);
-                e
-            });
+            let job = coordinator
+                .claim_one_until_shutdown(shutdown_signal)
+                .await
+                .map_err(|e| {
+                    error!("Could not get job : {:?}", e);
+                    e
+                });
 
             match job {
                 Ok(Some(job)) => Some((job, ())),
@@ -74,17 +78,6 @@ pub(crate) fn job_stream_from_coordinator(
                 }
             }
         };
-        let shutdown_fut = shutdown_signal.clone();
-
-        async move {
-            let job_fut = job_fut.fuse();
-            let shutdown_fut = shutdown_fut.fuse();
-            futures::pin_mut!(job_fut, shutdown_fut);
-
-            futures::select_biased! {
-                res = job_fut => res,
-                _ = shutdown_fut => None
-            }
-        }
+        job_fut
     })
 }
