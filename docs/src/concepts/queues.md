@@ -2,8 +2,10 @@
 
 Graphile Worker RS uses PostgreSQL as the source of truth for runnable jobs, and
 worker concurrency decides how many jobs a worker may execute at the same time.
-Queues add another layer of control: they let you group jobs by workload and
-serialize jobs that share the same queue name.
+Task identifiers divide work by handler/workload. A worker may register several
+task identifiers and claims each one independently, so a deep backlog for one
+task does not hide runnable work for another. The optional `queue_name` field is
+a separate ordering key that serializes jobs which share a protected resource.
 
 Use queues when one class of work should not interfere with another, or when a
 sequence of jobs must not run in parallel.
@@ -40,9 +42,9 @@ let spec = JobSpec {
 };
 ```
 
-Queue names are data, not task identifiers. Different task handlers can share a
-queue when they must be serialized together, and the same task handler can use
-different queues for different tenants, accounts, or workload classes.
+Ordering-key names are data, not task identifiers. Different task handlers can
+share one when they must be serialized together, and the same task handler can
+use different keys for different tenants, accounts, or resources.
 
 ## Serial Queues
 
@@ -154,39 +156,17 @@ let worker = graphile_worker::WorkerOptions::default()
 
 `LocalQueueConfig` includes:
 
-- `size`: maximum number of jobs each local queue may fetch and hold at once.
-  The default is `100`.
+- `size`: process-wide maximum number of accepted jobs. Buffered, running, and
+  completion/failure-pending jobs all count. The default is `100`.
 - `ttl`: how long locally fetched jobs may stay unclaimed before being returned
   to the database. The default is five minutes.
 - `refetch_delay`: an optional delay strategy used when a fetch returns fewer
   jobs than requested.
-- `queue_count`: number of independent local queues to run inside this worker.
-  The default is `1`.
-
-When `queue_count` is greater than one, `size` applies to each local queue. For
-example, `size = 3` and `queue_count = 4` allow up to twelve jobs to be locked
-locally across the worker. Tests also assert that `queue_count` is capped by
-worker concurrency, because each local queue needs at least one worker draining
-it.
-
-```rust,ignore
-let local_queue = LocalQueueConfig::default()
-    .with_size(3)
-    .with_queue_count(4);
-
-let worker = graphile_worker::WorkerOptions::default()
-    .concurrency(5)
-    .local_queue(local_queue)
-    .define_job::<SmallFastJob>()
-    .pg_pool(pg_pool)
-    .init()
-    .await?;
-```
-
-Multiple local queues can improve throughput for very small, high-volume jobs
-by allowing several fetch batches in parallel. They can also lock more jobs
-inside one worker, so keep `size` lower when increasing `queue_count` and
-benchmark with realistic workloads.
+One coordinator divides free capacity fairly across the registered task
+identifiers. It maintains one in-process buffer per task and dispatches those
+buffers round-robin. A single claim wave does not redistribute an empty task's
+quota, which keeps each database transaction bounded; later waves rotate the
+remainder.
 
 ## Practical Guidance
 
@@ -201,5 +181,4 @@ internals.
   block everything else.
 - Enable and tune `local_queue` when polling overhead or very small jobs become
   a bottleneck.
-- Raise `queue_count` only after measuring; it increases parallel fetch capacity
-  and the number of jobs a worker can hold locally.
+- Set `size` as a process-wide acceptance bound, not as a per-handler cache size.

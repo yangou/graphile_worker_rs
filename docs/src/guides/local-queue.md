@@ -57,9 +57,9 @@ let config = LocalQueueConfig::builder()
 
 ## Config Fields
 
-`size` controls the maximum number of jobs fetched and held by each local queue.
-The default is `100`. It must be greater than zero and must not exceed
-`i32::MAX`.
+`size` controls the process-wide maximum number of accepted jobs. Buffered,
+running, and completion/failure-pending jobs all count. The default is `100`.
+It must be greater than zero and must not exceed `i32::MAX`.
 
 `ttl` controls how long fetched jobs may remain unclaimed in the local queue
 before they are returned to PostgreSQL. The default is five minutes.
@@ -67,13 +67,6 @@ before they are returned to PostgreSQL. The default is five minutes.
 `refetch_delay` is optional. It slows the next fetch after a low-yield fetch so
 the worker does not immediately poll the database again when the queue appears
 empty or nearly empty.
-
-`queue_count` controls how many independent local queues run inside one worker.
-The default is `1`. It must be greater than zero. `size` applies per queue, so
-the maximum local capacity is `size * queue_count`.
-
-If `queue_count` is greater than worker concurrency, it is capped at the
-concurrency value because each local queue needs a worker draining it.
 
 ## Modes
 
@@ -121,21 +114,10 @@ Local Queue does not change job ownership rules. Jobs are still locked in
 PostgreSQL under the worker id, and the worker's normal concurrency controls how
 many handlers can run at the same time.
 
-With a single local queue, one batch is shared by the worker tasks. With
-`queue_count` greater than one, the worker starts multiple independent local
-queues and checks them round-robin. This can improve throughput for very small,
-high-volume jobs, but it can also lock more work inside one process:
-
-```rust,ignore
-use graphile_worker::LocalQueueConfig;
-
-let config = LocalQueueConfig::default()
-    .with_size(50)
-    .with_queue_count(4);
-```
-
-In this example, up to `200` jobs may be locked locally if worker concurrency is
-at least `4`.
+One claim coordinator assigns the free process capacity fairly across all
+registered task identifiers. Claimed jobs enter one buffer per task identifier,
+and worker slots consume those buffers round-robin. This prevents one task's
+backlog from starving another while retaining a single process-wide cap.
 
 ## Shutdown And TTL
 

@@ -1,26 +1,19 @@
 use std::sync::Arc;
 
-use chrono::Utc;
 use futures::StreamExt;
 use tracing::{error, info};
 
 use super::job_execution::run_and_release_job;
 use super::{Worker, WorkerRuntimeError};
+use crate::streams::job_fetch::job_stream_from_coordinator;
 use crate::streams::job_signal::JobSignalSource;
-use crate::streams::job_stream;
-use graphile_worker_queries::get_job::get_job;
 
 impl Worker {
     /// Runs the worker once and processes all available jobs, then returns.
     pub async fn run_once(&self) -> Result<(), WorkerRuntimeError> {
-        let job_stream = job_stream(
-            self.database.clone(),
+        let job_stream = job_stream_from_coordinator(
+            self.claim_coordinator.clone(),
             self.shutdown_signal.clone(),
-            self.task_details.clone(),
-            self.schema.clone(),
-            self.worker_id.clone(),
-            self.forbidden_flags.clone(),
-            self.use_local_time,
         );
 
         let runner = self.runner();
@@ -33,6 +26,7 @@ impl Worker {
                     async move {
                         loop {
                             let job_id = *job.id();
+                            let task_id = *job.task_id();
                             let has_queue = job.job_queue_id().is_some();
                             let result = run_and_release_job(
                                 Arc::new(job),
@@ -54,19 +48,9 @@ impl Worker {
                                 break;
                             }
                             info!(job_id, "Job has queue, fetching another job");
-                            let now = runner.use_local_time.then(Utc::now);
-                            let task_details_guard = runner.task_details.read().await;
-                            let new_job = get_job(
-                                &runner.database,
-                                &task_details_guard,
-                                &runner.schema,
-                                &runner.worker_id,
-                                &runner.forbidden_flags,
-                                now,
-                            )
-                            .await
-                            .unwrap_or(None);
-                            drop(task_details_guard);
+                            runner.claim_coordinator.restart_task_scan(task_id).await;
+                            let new_job =
+                                runner.claim_coordinator.claim_one().await.unwrap_or(None);
                             let Some(new_job) = new_job else {
                                 break;
                             };

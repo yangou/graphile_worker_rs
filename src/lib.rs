@@ -44,6 +44,7 @@ pub mod runner;
 
 mod shutdown;
 
+mod claim_coordinator;
 mod recovery_tasks;
 
 /// LocalQueue for batch-fetching jobs to improve throughput

@@ -144,19 +144,31 @@ async fn release_job_returns_error_when_replacement_payload_cannot_be_persisted(
         hooks.clone(),
         shutdown_signal.clone(),
     ));
+    let schema = graphile_worker_database::Schema::new("graphile_worker");
+    let task_details: graphile_worker_queries::task_identifiers::SharedTaskDetails =
+        Default::default();
+    let claim_coordinator = crate::claim_coordinator::ClaimCoordinator::new(
+        database.clone(),
+        schema.clone(),
+        "worker".to_string(),
+        task_details.clone(),
+        Vec::new(),
+        false,
+    );
     let worker = WorkerRunner {
         worker_id: "worker".to_string(),
         jobs: HashMap::new(),
         database,
-        schema: graphile_worker_database::Schema::new("graphile_worker"),
-        task_details: Default::default(),
-        forbidden_flags: Vec::new(),
+        schema,
+        task_details,
+        claim_coordinator,
         use_local_time: false,
         shutdown_signal,
         extensions: ReadOnlyExtensions::from(Extensions::new()),
         hooks,
         completion_batcher: None,
         failure_batcher: Some(failure_batcher),
+        accepted_tracker: None,
         shutdown_config: crate::WorkerShutdownConfig::default(),
     };
     let job = Arc::new(

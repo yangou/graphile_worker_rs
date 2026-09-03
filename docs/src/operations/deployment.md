@@ -247,7 +247,6 @@ let worker = WorkerOptions::default()
     .local_queue(
         LocalQueueConfig::default()
             .with_size(100)
-            .with_queue_count(2)
             .with_ttl(Duration::from_secs(300))
             .with_refetch_delay(
                 RefetchDelayConfig::default()
@@ -262,12 +261,12 @@ let worker = WorkerOptions::default()
     .await?;
 ```
 
-`size` applies per local queue, so total local capacity is
-`size * queue_count`. Workers configured with `forbidden_flags` bypass the local
-queue and fetch jobs directly from the database. Benchmark realistic jobs before
-turning this on for all production workers; the best settings depend on
-PostgreSQL latency, pool size, worker concurrency, job duration, and the number
-of replicas.
+`size` is the process-wide accepted-work cap, including buffered, running, and
+completion/failure-pending jobs. Workers configured with `forbidden_flags`
+bypass the local queue and fetch jobs directly from the database. Benchmark
+realistic jobs before turning this on for all production workers; the best
+settings depend on PostgreSQL latency, pool size, worker concurrency, job
+duration, and the number of replicas.
 
 ## Observability
 

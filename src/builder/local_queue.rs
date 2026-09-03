@@ -17,15 +17,9 @@ impl WorkerOptions {
     /// as they wait in the local cache. The cache has a TTL after which
     /// unclaimed jobs are returned to the database.
     ///
-    /// `LocalQueueConfig::queue_count` can be raised above 1 to run multiple
-    /// independent local queues in the same worker. `size` is applied per queue,
-    /// so total local capacity is `size * queue_count`.
-    /// There is no universal best setting for throughput; benchmark realistic
-    /// jobs with your own PostgreSQL latency, pool size, worker concurrency, and
-    /// local queue settings before tuning this in production.
-    ///
-    /// Workers with `forbidden_flags` will bypass the LocalQueue and fetch
-    /// jobs directly from the database.
+    /// One coordinator divides the process-wide `size` cap fairly across all
+    /// registered task identifiers. Forbidden flags remain part of the same
+    /// bounded claim path.
     ///
     /// # Example
     /// ```
@@ -36,7 +30,6 @@ impl WorkerOptions {
     ///     .local_queue(
     ///         LocalQueueConfig::default()
     ///             .with_size(100)
-    ///             .with_queue_count(2)
     ///             .with_ttl(Duration::from_secs(300))
     ///             .with_refetch_delay(
     ///                 RefetchDelayConfig::default()

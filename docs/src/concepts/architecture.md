@@ -49,7 +49,7 @@ PostgreSQL worker schema
   v
 Worker job loop
   |
-  | get_job / batch_get_jobs
+  | task-scoped claim wave
   v
 TaskHandler::run(WorkerContext)
   |
@@ -135,13 +135,11 @@ dispatcher coalesces them when worker tasks are already saturated. This keeps
 PostgreSQL notification listeners drained while polling still provides the
 fallback path for missed or future work.
 
-There are two fetch modes:
-
-- Direct mode fetches one job per worker task with `get_job`.
-- Local queue mode prefetches jobs with `batch_get_jobs` and wakes worker
-  tasks through an internal signal when cached jobs are available.
-
-Both modes end in the same execution and release logic.
+Direct mode and Local Queue mode use the same task-scoped claim primitive.
+Direct mode requests one accepted job. Local Queue mode allocates the available
+process capacity fairly across registered task identifiers, then distributes
+the resulting per-task buffers round-robin. Both modes use the same pause gate,
+ordering-key locks, execution, and release logic.
 
 ## Running a Task
 
@@ -231,9 +229,8 @@ src/
 crates/
   graphile-worker-queries/
     src/add_job/         SQL wrappers for inserting jobs
-    src/get_job.rs       single-job locking fetch
-    src/batch_get_jobs.rs
-                         batched locking fetch for LocalQueue
+    src/claim_queue_jobs.rs
+                         bounded task-scoped locking fetch
     src/complete_job.rs  completion persistence
     src/fail_job/        failure persistence
     src/return_jobs/     recovery and interrupted-job return

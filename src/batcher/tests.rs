@@ -111,6 +111,7 @@ async fn completion_batcher_falls_back_after_shutdown() {
             has_queue: false,
             job: Arc::new(job),
             duration: Duration::ZERO,
+            accepted_tracker: None,
         })
         .await;
 
@@ -169,6 +170,7 @@ async fn failure_batcher_falls_back_after_shutdown() {
             job: Arc::new(job),
             error: "direct failure".to_string(),
             will_retry: true,
+            accepted_tracker: None,
         })
         .await;
 

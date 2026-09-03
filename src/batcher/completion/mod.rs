@@ -20,6 +20,7 @@ pub struct CompletionRequest {
     pub has_queue: bool,
     pub job: Arc<Job>,
     pub duration: Duration,
+    pub accepted_tracker: Option<Arc<crate::local_queue::AcceptedWorkTracker>>,
 }
 
 pub struct CompletionBatcher {
@@ -67,6 +68,9 @@ impl CompletionBatcher {
             warn!("Batcher closed, completing job directly");
             let req = e.0;
             if complete_job_direct(&req, &self.database, &self.schema, &self.worker_id).await {
+                if let Some(tracker) = &req.accepted_tracker {
+                    tracker.persisted(1);
+                }
                 emit_completion_hook(&req, &self.worker_id, &self.hooks).await;
             }
         }
@@ -120,7 +124,18 @@ async fn flush_batch(
     if !hooks.is_empty() {
         for req in batch {
             if batch_result.persisted(req) {
+                if let Some(tracker) = &req.accepted_tracker {
+                    tracker.persisted(1);
+                }
                 emit_completion_hook(req, worker_id, hooks).await;
+            }
+        }
+    } else {
+        for req in batch {
+            if batch_result.persisted(req) {
+                if let Some(tracker) = &req.accepted_tracker {
+                    tracker.persisted(1);
+                }
             }
         }
     }

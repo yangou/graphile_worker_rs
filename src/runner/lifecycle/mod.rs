@@ -76,6 +76,7 @@ impl Worker {
             database: self.database.clone(),
             schema: self.schema.clone(),
             task_details: self.task_details.clone(),
+            claim_coordinator: self.claim_coordinator.clone(),
             forbidden_flags: self.forbidden_flags.clone(),
             crontabs: self.crontabs.clone(),
             use_local_time: self.use_local_time,

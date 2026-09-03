@@ -1,16 +1,19 @@
-use graphile_worker_job::Job;
 use graphile_worker_lifecycle_hooks::LocalQueueMode;
 use graphile_worker_runtime as runtime;
 use tracing::trace;
 
 use super::LocalQueue;
+use crate::claim_coordinator::QueueJobs;
 
 impl LocalQueue {
-    pub(super) async fn received_jobs(&self, jobs: Vec<Job>, fetched_max: bool) {
-        let job_count = jobs.len();
+    pub(super) async fn received_jobs(&self, queues: Vec<QueueJobs>, fetched_max: bool) {
+        let job_count = queues.iter().map(|queue| queue.jobs.len()).sum::<usize>();
+        self.0.accepted_tracker.accepted(job_count);
         {
-            let mut job_queue = self.0.job_queue.lock().await;
-            job_queue.extend(jobs);
+            let mut buffers = self.0.job_queues.lock().await;
+            for queue in queues {
+                buffers.push(queue.identifier, queue.jobs);
+            }
         }
 
         self.set_mode(LocalQueueMode::Waiting).await;

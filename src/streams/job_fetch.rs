@@ -1,11 +1,13 @@
-use chrono::Utc;
 use futures::{FutureExt, Stream};
 use graphile_worker_database::{Database, Schema};
 use graphile_worker_shutdown_signal::ShutdownSignal;
 use tracing::error;
 
 use crate::Job;
-use graphile_worker_queries::{get_job::get_job, task_identifiers::SharedTaskDetails};
+use graphile_worker_queries::task_identifiers::SharedTaskDetails;
+
+use crate::claim_coordinator::ClaimCoordinator;
+use std::sync::Arc;
 
 /// Creates a stream that yields jobs ready for processing.
 ///
@@ -39,26 +41,26 @@ pub fn job_stream(
     forbidden_flags: Vec<String>,
     use_local_time: bool,
 ) -> impl Stream<Item = Job> {
+    let coordinator = ClaimCoordinator::new(
+        database,
+        schema,
+        worker_id,
+        task_details,
+        forbidden_flags,
+        use_local_time,
+    );
+    job_stream_from_coordinator(coordinator, shutdown_signal)
+}
+
+pub(crate) fn job_stream_from_coordinator(
+    coordinator: Arc<ClaimCoordinator>,
+    shutdown_signal: ShutdownSignal,
+) -> impl Stream<Item = Job> {
     futures::stream::unfold((), move |()| {
-        let database = database.clone();
-        let task_details = task_details.clone();
-        let schema = schema.clone();
-        let worker_id = worker_id.clone();
-        let forbidden_flags = forbidden_flags.clone();
+        let coordinator = coordinator.clone();
 
         let job_fut = async move {
-            let now = use_local_time.then(Utc::now);
-            let task_details_guard = task_details.read().await;
-            let job = get_job(
-                &database,
-                &task_details_guard,
-                &schema,
-                &worker_id,
-                &forbidden_flags,
-                now,
-            )
-            .await
-            .map_err(|e| {
+            let job = coordinator.claim_one().await.map_err(|e| {
                 error!("Could not get job : {:?}", e);
                 e
             });

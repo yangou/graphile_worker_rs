@@ -18,11 +18,11 @@ impl WorkerUtils {
     }
 
     /// Atomically changes the database-wide worker claim gate.
-    pub async fn set_worker_paused(
+    pub async fn set_worker_pause(
         &self,
-        paused: bool,
+        pause_reason: Option<&str>,
     ) -> Result<WorkerPauseUpdate, GraphileWorkerError> {
-        actions::set_worker_paused(self, &self.database, paused).await
+        actions::set_worker_pause(self, &self.database, pause_reason).await
     }
 
     /// Removes a job from the queue by its job key.

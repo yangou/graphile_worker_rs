@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use futures::stream::FuturesUnordered;
 use graphile_worker_runtime as runtime;
 use tracing::{debug, warn};
@@ -11,7 +9,7 @@ use crate::streams::job_signal::{job_signal_stream, JobSignalStreamConfig};
 
 pub(super) async fn run(
     worker: &Worker,
-    local_queues: Vec<LocalQueue>,
+    local_queue: LocalQueue,
     job_signal_rx: LocalQueueSignalReceiver,
 ) -> Result<(), WorkerRuntimeError> {
     let job_signal = job_signal_stream(
@@ -28,16 +26,16 @@ pub(super) async fn run(
     debug!("Listening for jobs with LocalQueue...");
     let (source_tx, source_rx) = runtime::channel(worker.concurrency * 4);
     let worker_handles = FuturesUnordered::new();
-    let runner = worker.runner();
-    let local_queues = Arc::new(local_queues);
+    let mut runner = worker.runner();
+    runner.accepted_tracker = Some(local_queue.accepted_tracker());
 
-    for index in 0..worker.concurrency {
-        let local_queues = local_queues.clone();
+    for _ in 0..worker.concurrency {
+        let local_queue = local_queue.clone();
         let runner = runner.clone();
         let source_rx = source_rx.clone();
         worker_handles.push(runtime::spawn(async move {
             while let Ok(source) = source_rx.recv().await {
-                sources::process_local_queue_source(&runner, &local_queues, index, source).await?;
+                sources::process_local_queue_source(&runner, &local_queue, source).await?;
             }
 
             Ok::<(), ProcessJobError>(())
@@ -49,10 +47,8 @@ pub(super) async fn run(
         sources::dispatch_job_signals(job_signal, source_tx, worker_handles, worker.concurrency)
             .await;
 
-    for local_queue in local_queues.iter() {
-        if let Err(e) = local_queue.release().await {
-            warn!(error = %e, "Error releasing LocalQueue");
-        }
+    if let Err(e) = local_queue.release().await {
+        warn!(error = %e, "Error releasing LocalQueue");
     }
 
     dispatch_result?;

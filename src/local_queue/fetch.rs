@@ -1,10 +1,9 @@
-use chrono::Utc;
 use futures::FutureExt;
 use graphile_worker_lifecycle_hooks::{LocalQueueGetJobsCompleteContext, LocalQueueMode};
 use graphile_worker_runtime as runtime;
 use tracing::{debug, error};
 
-use graphile_worker_queries::batch_get_jobs::batch_get_jobs;
+use crate::claim_coordinator::ClaimWave;
 
 use super::LocalQueue;
 
@@ -23,6 +22,17 @@ impl LocalQueue {
 
             if !can_fetch {
                 self.0.state_notify.notified().await;
+                continue;
+            }
+
+            if self.0.accepted_tracker.free_capacity(self.0.config.size) == 0 {
+                let capacity_available = self.0.accepted_tracker.capacity_notify.notified().fuse();
+                let state_changed = self.0.state_notify.notified().fuse();
+                futures::pin_mut!(capacity_available, state_changed);
+                futures::select_biased! {
+                    _ = state_changed => {}
+                    _ = capacity_available => {}
+                }
                 continue;
             }
 
@@ -57,33 +67,20 @@ impl LocalQueue {
         if self.is_refetch_delay_active() {
             self.set_refetch_delay_fetch_on_complete(true);
             self.end_fetch();
-            self.0.state_notify.notify_one();
             return;
         }
 
         self.set_fetch_again(false);
         self.reset_refetch_delay_counter();
 
-        let task_details = self.0.task_details.read().await;
-        let now = self.0.use_local_time.then(Utc::now);
-        let result = batch_get_jobs(
-            &self.0.database,
-            &task_details,
-            &self.0.schema,
-            &self.0.worker_id,
-            &[],
-            self.0.config.size.try_into().unwrap_or(i32::MAX),
-            now,
-        )
-        .await;
-        drop(task_details);
+        let free_capacity = self.0.accepted_tracker.free_capacity(self.0.config.size);
+        let result = self.0.claim_coordinator.claim_wave(free_capacity).await;
 
         self.end_fetch();
-        self.0.state_notify.notify_one();
 
         match result {
-            Ok(jobs) => {
-                let job_count = jobs.len();
+            Ok(ClaimWave::Claimed(queues)) => {
+                let job_count = queues.iter().map(|queue| queue.jobs.len()).sum::<usize>();
                 debug!(job_count, "LocalQueue fetched jobs from database");
 
                 self.0
@@ -94,7 +91,7 @@ impl LocalQueue {
                     })
                     .await;
 
-                let fetched_max = job_count >= self.0.config.size;
+                let fetched_max = job_count >= free_capacity && free_capacity > 0;
 
                 if let Some(ref refetch_delay_config) = self.0.config.refetch_delay {
                     let threshold_surpassed =
@@ -105,11 +102,14 @@ impl LocalQueue {
                     }
                 }
 
-                if !jobs.is_empty() {
-                    self.received_jobs(jobs, fetched_max).await;
+                if job_count > 0 {
+                    self.received_jobs(queues, fetched_max).await;
                 } else if !self.0.continuous {
                     self.set_mode(LocalQueueMode::Released).await;
                 }
+            }
+            Ok(ClaimWave::Paused) => {
+                debug!("LocalQueue claim paused");
             }
             Err(e) => {
                 error!(error = %e, "LocalQueue failed to fetch jobs");

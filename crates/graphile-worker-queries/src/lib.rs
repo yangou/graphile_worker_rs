@@ -1,11 +1,9 @@
 pub mod add_job;
-pub mod batch_get_jobs;
+pub mod claim_queue_jobs;
 pub mod complete_job;
 pub(crate) mod duration;
 pub mod errors;
 pub mod fail_job;
-pub mod get_job;
-mod job_query_helpers;
 pub mod recover_workers;
 pub mod return_jobs;
 pub mod rows;

@@ -11,8 +11,6 @@ pub enum LocalQueueConfigError {
     },
     #[error("local_queue.size must be greater than 0")]
     EmptySize,
-    #[error("local_queue.queue_count must be greater than 0")]
-    EmptyQueueCount,
     #[error("local_queue.size ({size}) must not exceed i32::MAX ({max})")]
     SizeTooLarge { size: usize, max: i32 },
 }

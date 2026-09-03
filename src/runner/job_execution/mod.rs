@@ -2,7 +2,6 @@ mod hooks;
 
 use std::sync::Arc;
 
-use chrono::Utc;
 use graphile_worker_job::Job;
 use graphile_worker_lifecycle_hooks::JobFetchContext;
 use tracing::{error, trace};
@@ -12,7 +11,6 @@ use super::errors::ProcessJobError;
 use super::release::release_job;
 use super::WorkerRunner;
 use crate::streams::job_signal::JobSignalSource;
-use graphile_worker_queries::get_job::get_job;
 
 /// Fetches and processes a single job from the queue.
 ///
@@ -35,23 +33,10 @@ pub(super) async fn process_one_job(
     worker: &WorkerRunner,
     source: JobSignalSource,
 ) -> Result<Option<Job>, ProcessJobError> {
-    let now = worker.use_local_time.then(Utc::now);
-    let task_details_guard = worker.task_details.read().await;
-    let job = get_job(
-        &worker.database,
-        &task_details_guard,
-        &worker.schema,
-        &worker.worker_id,
-        &worker.forbidden_flags,
-        now,
-    )
-    .await
-    .map_err(|e| {
+    let job = worker.claim_coordinator.claim_one().await.map_err(|e| {
         error!("Could not get job : {:?}", e);
         e
     })?;
-    drop(task_details_guard);
-
     match job {
         Some(job) => {
             let job = Arc::new(job);

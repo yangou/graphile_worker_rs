@@ -22,6 +22,7 @@ pub(super) async fn release_completed_job(
                 has_queue: job.job_queue_id().is_some(),
                 job,
                 duration,
+                accepted_tracker: worker.accepted_tracker.clone(),
             })
             .await;
         return Ok(());
@@ -33,6 +34,10 @@ pub(super) async fn release_completed_job(
             job_id: *job.id(),
             source,
         })?;
+
+    if let Some(tracker) = &worker.accepted_tracker {
+        tracker.persisted(1);
+    }
 
     emit_completion_hook(job, worker, duration).await;
     Ok(())

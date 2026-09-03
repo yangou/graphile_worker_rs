@@ -52,7 +52,7 @@ impl LocalQueue {
 
         debug!("LocalQueue TTL expired, returning jobs to database");
 
-        let jobs: Vec<Job> = self.0.job_queue.lock().await.drain(..).collect();
+        let jobs: Vec<Job> = self.0.job_queues.lock().await.drain();
         if !jobs.is_empty() {
             let jobs_count = jobs.len();
             if let Err(e) = Self::return_jobs_with_retry(
@@ -65,6 +65,7 @@ impl LocalQueue {
             {
                 error!(error = %e, "Failed to return jobs after TTL expiry (exhausted retries)");
             } else {
+                self.0.accepted_tracker.persisted(jobs_count);
                 self.0
                     .hooks
                     .emit(LocalQueueReturnJobsContext {
@@ -93,7 +94,7 @@ impl LocalQueue {
 
         debug!("LocalQueue releasing, returning jobs to database");
 
-        let jobs: Vec<Job> = self.0.job_queue.lock().await.drain(..).collect();
+        let jobs: Vec<Job> = self.0.job_queues.lock().await.drain();
         if !jobs.is_empty() {
             let jobs_count = jobs.len();
             Self::return_jobs_with_retry(
@@ -103,6 +104,7 @@ impl LocalQueue {
                 &self.0.worker_id,
             )
             .await?;
+            self.0.accepted_tracker.persisted(jobs_count);
 
             self.0
                 .hooks

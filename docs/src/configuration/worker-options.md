@@ -224,14 +224,16 @@ the process-local queue.
 
 Every migrated worker schema contains one claim-control row. Use
 `WorkerUtils::worker_control_state()` to inspect it and
-`WorkerUtils::set_worker_paused(bool)` to pause or resume claims. The same
+`WorkerUtils::set_worker_pause(Some(reason))` to pause claims, or
+`WorkerUtils::set_worker_pause(None)` to resume them. The same
 operations are available through `WorkerUtilsWithExecutor`, so callers may
 include the state change in their own transaction.
 
 Pause gates claims only. Adding jobs and managing existing rows remain
-available. A claim takes a shared lock on the control row in the same database
-statement that locks jobs, so a successful pause waits for already-started
-claims and prevents later claims from passing the gate.
+available. A claim wave takes a shared lock on the control row before locking
+jobs in the same short transaction, so a successful pause waits for
+already-started claim transactions and prevents later claims from passing the
+gate.
 
 ## Hooks, plugins, and extensions
 

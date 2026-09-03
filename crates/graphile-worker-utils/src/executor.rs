@@ -38,11 +38,11 @@ where
     }
 
     /// Atomically changes the database-wide worker claim gate through the injected executor.
-    pub async fn set_worker_paused(
+    pub async fn set_worker_pause(
         &mut self,
-        paused: bool,
+        pause_reason: Option<&str>,
     ) -> Result<WorkerPauseUpdate, GraphileWorkerError> {
-        actions::set_worker_paused(&self.utils, &mut self.executor, paused).await
+        actions::set_worker_pause(&self.utils, &mut self.executor, pause_reason).await
     }
 
     pub(super) fn new(utils: WorkerUtils, executor: E) -> Self {
