@@ -75,7 +75,7 @@ fn local_queue_config_validation_rejects_invalid_values() {
 async fn capacity_release_retains_a_wakeup_for_the_fetch_coordinator() {
     let tracker = AcceptedWorkTracker::default();
     tracker.accepted(1);
-    tracker.persisted(1);
+    tracker.settled(1);
 
     tokio::time::timeout(
         Duration::from_millis(100),

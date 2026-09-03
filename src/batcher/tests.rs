@@ -4,12 +4,14 @@ use std::time::Duration;
 
 use futures::FutureExt;
 use graphile_worker_lifecycle_hooks::{HookRegistry, JobComplete, JobFail};
+use graphile_worker_runtime as runtime;
 use graphile_worker_shutdown_signal::ShutdownSignal;
 use sqlx::postgres::{PgArguments, PgPoolOptions, PgRow};
 use sqlx::query::{Query, QueryAs};
 use sqlx::{FromRow, PgPool, Postgres};
 
 use super::{CompletionBatcher, CompletionRequest, FailureBatcher, FailureRequest};
+use crate::local_queue::AcceptedWorkTracker;
 
 fn safe_query(sql: impl Into<String>) -> Query<'static, Postgres, PgArguments> {
     sqlx::query(sqlx::AssertSqlSafe(sql.into()))
@@ -75,6 +77,17 @@ fn failure_hooks(counter: Arc<AtomicUsize>) -> Arc<HookRegistry> {
 
 fn ready_shutdown_signal() -> ShutdownSignal {
     futures::future::ready(()).boxed().shared()
+}
+
+fn pending_shutdown_signal() -> (Arc<runtime::Notify>, ShutdownSignal) {
+    let notify = Arc::new(runtime::Notify::new());
+    let notify_for_signal = notify.clone();
+    let signal = async move {
+        notify_for_signal.notified().await;
+    }
+    .boxed()
+    .shared();
+    (notify, signal)
 }
 
 #[tokio::test]
@@ -187,4 +200,104 @@ async fn failure_batcher_falls_back_after_shutdown() {
     assert!(row.1.is_none());
 
     drop_schema(&pg_pool, &schema).await;
+}
+
+#[tokio::test]
+async fn completion_persistence_failure_releases_local_capacity() {
+    let Some(pg_pool) = database_pool() else {
+        return;
+    };
+    let schema = setup_schema(&pg_pool, "completion_capacity").await;
+    let utils = crate::worker_utils::client::WorkerUtils::new(pg_pool.clone(), schema.clone());
+    let job = utils
+        .add_raw_job(
+            "completion_capacity_job",
+            serde_json::json!({}),
+            crate::JobSpec::default(),
+        )
+        .await
+        .expect("Failed to add completion capacity job");
+    let tracker = Arc::new(AcceptedWorkTracker::default());
+    tracker.accepted(1);
+
+    let (shutdown, shutdown_signal) = pending_shutdown_signal();
+    let batcher = CompletionBatcher::new(
+        Duration::from_millis(10),
+        pg_pool.clone(),
+        schema.clone(),
+        "worker".to_string(),
+        Arc::new(HookRegistry::new()),
+        shutdown_signal,
+    );
+    drop_schema(&pg_pool, &schema).await;
+
+    batcher
+        .complete(CompletionRequest {
+            job_id: *job.id(),
+            has_queue: false,
+            job: Arc::new(job),
+            duration: Duration::ZERO,
+            accepted_tracker: Some(tracker.clone()),
+        })
+        .await;
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while tracker.free_capacity(1) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("completion batch never settled local capacity");
+    assert_eq!(
+        tracker.free_capacity(1),
+        1,
+        "a terminal local request must release capacity even if persistence fails"
+    );
+    shutdown.notify_one();
+    batcher.await_shutdown().await;
+}
+
+#[tokio::test]
+async fn failure_persistence_failure_releases_local_capacity() {
+    let Some(pg_pool) = database_pool() else {
+        return;
+    };
+    let schema = setup_schema(&pg_pool, "failure_capacity").await;
+    let utils = crate::worker_utils::client::WorkerUtils::new(pg_pool.clone(), schema.clone());
+    let job = utils
+        .add_raw_job(
+            "failure_capacity_job",
+            serde_json::json!({}),
+            crate::JobSpec::default(),
+        )
+        .await
+        .expect("Failed to add failure capacity job");
+    let tracker = Arc::new(AcceptedWorkTracker::default());
+    tracker.accepted(1);
+
+    let batcher = FailureBatcher::new(
+        Duration::from_secs(60),
+        pg_pool.clone(),
+        schema.clone(),
+        "worker".to_string(),
+        Arc::new(HookRegistry::new()),
+        ready_shutdown_signal(),
+    );
+    batcher.await_shutdown().await;
+    drop_schema(&pg_pool, &schema).await;
+
+    batcher
+        .fail(FailureRequest {
+            job: Arc::new(job),
+            error: "expected persistence failure".to_string(),
+            will_retry: true,
+            accepted_tracker: Some(tracker.clone()),
+        })
+        .await;
+
+    assert_eq!(
+        tracker.free_capacity(1),
+        1,
+        "a terminal local request must release capacity even if persistence fails"
+    );
 }

@@ -636,7 +636,11 @@ async fn unkeyed_claim_stays_bounded_under_row_contention() {
             Some(now + chrono::Duration::seconds(1)),
         )
         .await;
-        assert!(claimed.jobs.len() <= 2);
+        assert_eq!(
+            claimed.jobs.len(),
+            2,
+            "a locked first row must not consume the bounded unkeyed claim window"
+        );
         assert!(claimed.jobs.iter().all(|job| job.id() != first.id()));
 
         blocker

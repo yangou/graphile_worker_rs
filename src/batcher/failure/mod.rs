@@ -69,10 +69,12 @@ impl FailureBatcher {
         if let Err(e) = self.tx.send(req).await {
             warn!("Batcher closed, failing job directly");
             let req = e.0;
-            if fail_job_direct(&req, &self.database, &self.schema, &self.worker_id).await {
-                if let Some(tracker) = &req.accepted_tracker {
-                    tracker.persisted(1);
-                }
+            let persisted =
+                fail_job_direct(&req, &self.database, &self.schema, &self.worker_id).await;
+            if let Some(tracker) = &req.accepted_tracker {
+                tracker.settled(1);
+            }
+            if persisted {
                 emit_failure_hook(&req, &self.worker_id, &self.hooks).await;
             }
         }
@@ -123,13 +125,11 @@ async fn flush_failure_batch(
 
     let batch_result = persist_failure_batch(batch, database, schema, worker_id).await;
     for (req, persisted) in batch.iter().zip(batch_result.persisted()) {
-        if *persisted {
-            if let Some(tracker) = &req.accepted_tracker {
-                tracker.persisted(1);
-            }
-            if !hooks.is_empty() {
-                emit_failure_hook(req, worker_id, hooks).await;
-            }
+        if let Some(tracker) = &req.accepted_tracker {
+            tracker.settled(1);
+        }
+        if *persisted && !hooks.is_empty() {
+            emit_failure_hook(req, worker_id, hooks).await;
         }
     }
 }

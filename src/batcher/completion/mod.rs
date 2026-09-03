@@ -67,10 +67,12 @@ impl CompletionBatcher {
         if let Err(e) = self.tx.send(req).await {
             warn!("Batcher closed, completing job directly");
             let req = e.0;
-            if complete_job_direct(&req, &self.database, &self.schema, &self.worker_id).await {
-                if let Some(tracker) = &req.accepted_tracker {
-                    tracker.persisted(1);
-                }
+            let persisted =
+                complete_job_direct(&req, &self.database, &self.schema, &self.worker_id).await;
+            if let Some(tracker) = &req.accepted_tracker {
+                tracker.settled(1);
+            }
+            if persisted {
                 emit_completion_hook(&req, &self.worker_id, &self.hooks).await;
             }
         }
@@ -121,21 +123,16 @@ async fn flush_batch(
 
     let batch_result = complete_batch(batch, database, schema, worker_id).await;
 
+    for req in batch {
+        if let Some(tracker) = &req.accepted_tracker {
+            tracker.settled(1);
+        }
+    }
+
     if !hooks.is_empty() {
         for req in batch {
             if batch_result.persisted(req) {
-                if let Some(tracker) = &req.accepted_tracker {
-                    tracker.persisted(1);
-                }
                 emit_completion_hook(req, worker_id, hooks).await;
-            }
-        }
-    } else {
-        for req in batch {
-            if batch_result.persisted(req) {
-                if let Some(tracker) = &req.accepted_tracker {
-                    tracker.persisted(1);
-                }
             }
         }
     }

@@ -64,6 +64,7 @@ pub struct LocalQueueParams {
     pub poll_interval: Duration,
     pub continuous: bool,
     pub shutdown_signal: Option<ShutdownSignal>,
+    pub shutdown_grace_period: Duration,
     pub hooks: Arc<HookRegistry>,
     pub job_signal_sender: LocalQueueSignalSender,
 }
@@ -79,7 +80,11 @@ impl AcceptedWorkTracker {
         self.count.fetch_add(count, Ordering::SeqCst);
     }
 
-    pub(crate) fn persisted(&self, count: usize) {
+    pub(crate) fn settled(&self, count: usize) {
+        // Capacity tracks work still owned by this process, not whether the
+        // final database write succeeded. Once a request is terminal locally,
+        // failed persistence is left to stale-lock recovery and must not wedge
+        // the process's fetch budget forever.
         let previous = self.count.fetch_sub(count, Ordering::SeqCst);
         debug_assert!(previous >= count, "accepted-work count underflow");
         // One fetch coordinator waits for capacity. Retain a permit when it has

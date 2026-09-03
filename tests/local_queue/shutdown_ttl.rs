@@ -233,7 +233,7 @@ async fn local_queue_release_waits_for_run_loop() {
 }
 
 #[tokio::test]
-async fn shutdown_returns_jobs_from_a_claim_that_was_already_in_flight() {
+async fn shutdown_bounds_an_in_flight_claim_by_the_grace_period() {
     with_test_db(|test_db| async move {
         let utils = test_db.worker_utils();
         utils.migrate().await.expect("Failed to migrate");
@@ -260,6 +260,7 @@ async fn shutdown_returns_jobs_from_a_claim_that_was_already_in_flight() {
                 .concurrency(1)
                 .local_queue(LocalQueueConfig::builder().size(1).build())
                 .listen_os_shutdown_signals(false)
+                .shutdown_grace_period(Duration::from_millis(100))
                 .define_job::<ReleaseWaitsJob>()
                 .init()
                 .await
@@ -292,18 +293,16 @@ async fn shutdown_returns_jobs_from_a_claim_that_was_already_in_flight() {
         }
 
         worker.request_shutdown();
-        sleep(Duration::from_millis(50)).await;
-        assert!(
-            !worker_fut.is_finished(),
-            "Worker must wait for the single in-flight release to return claimed jobs"
-        );
-        blocker.commit().await.expect("Failed to release claim");
-
-        tokio::time::timeout(Duration::from_secs(5), worker_fut)
+        tokio::time::timeout(Duration::from_secs(2), worker_fut)
             .await
-            .expect("Worker shutdown hung after an in-flight claim completed")
+            .expect("Worker shutdown exceeded its grace period on an in-flight claim")
             .expect("Worker task failed")
             .expect("Worker returned an error");
+
+        blocker
+            .commit()
+            .await
+            .expect("Failed to release claim blocker");
 
         let jobs = test_db.get_jobs().await;
         assert_eq!(jobs.len(), 1);

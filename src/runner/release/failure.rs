@@ -19,10 +19,11 @@ pub(super) async fn release_failed_job(
 ) -> Result<(), ReleaseJobError> {
     if matches!(error, RunJobError::TaskAborted) {
         let recovery_delay = worker.shutdown_config.interrupted_job_retry_delay;
-        recover_shutdown_aborted_job(worker, job, recovery_delay).await?;
+        let result = recover_shutdown_aborted_job(worker, job, recovery_delay).await;
         if let Some(tracker) = &worker.accepted_tracker {
-            tracker.persisted(1);
+            tracker.settled(1);
         }
+        result?;
         return Ok(());
     }
 
@@ -46,10 +47,11 @@ pub(super) async fn release_failed_job(
         }
     }
 
-    persist_failed_job(&job, worker, &persisted_error, replacement_payload).await?;
+    let result = persist_failed_job(&job, worker, &persisted_error, replacement_payload).await;
     if let Some(tracker) = &worker.accepted_tracker {
-        tracker.persisted(1);
+        tracker.settled(1);
     }
+    result?;
     emit_failure_hook(job, worker, persisted_error, will_retry).await;
     Ok(())
 }

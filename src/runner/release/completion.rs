@@ -28,16 +28,17 @@ pub(super) async fn release_completed_job(
         return Ok(());
     }
 
-    complete_job(&worker.database, &job, &worker.worker_id, &worker.schema)
+    let result = complete_job(&worker.database, &job, &worker.worker_id, &worker.schema)
         .await
         .map_err(|source| ReleaseJobError {
             job_id: *job.id(),
             source,
-        })?;
+        });
 
     if let Some(tracker) = &worker.accepted_tracker {
-        tracker.persisted(1);
+        tracker.settled(1);
     }
+    result?;
 
     emit_completion_hook(job, worker, duration).await;
     Ok(())

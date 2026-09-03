@@ -23,6 +23,7 @@ pub(in crate::runner) fn create_local_queue(
         poll_interval: worker.poll_interval,
         continuous: true,
         shutdown_signal: Some(worker.shutdown_signal.clone()),
+        shutdown_grace_period: worker.shutdown_config.grace_period,
         hooks: worker.hooks.clone(),
         job_signal_sender: tx,
     });

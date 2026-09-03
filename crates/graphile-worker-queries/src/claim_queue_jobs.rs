@@ -182,6 +182,8 @@ pub fn claim_queue_jobs_sql(schema: &Schema) -> String {
                 and (cardinality($5::text[]) = 0 or (jobs.flags ?| $5::text[]) is not true)
                 order by jobs.run_at, jobs.priority, jobs.id
                 limit $3::int
+                for update of jobs
+                skip locked
             ),
             candidate_ids as materialized (
                 select candidates.id

@@ -12,9 +12,18 @@ impl LocalQueue {
         if old_mode == LocalQueueMode::Released || old_mode == new_mode {
             return;
         }
-        trace!(?old_mode, ?new_mode, "LocalQueue mode transition");
         *mode = new_mode;
         drop(mode);
+
+        self.emit_mode_transition(old_mode, new_mode).await;
+    }
+
+    pub(in crate::local_queue) async fn emit_mode_transition(
+        &self,
+        old_mode: LocalQueueMode,
+        new_mode: LocalQueueMode,
+    ) {
+        trace!(?old_mode, ?new_mode, "LocalQueue mode transition");
 
         self.0
             .hooks

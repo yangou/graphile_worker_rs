@@ -99,6 +99,8 @@ pub(super) struct LocalQueueState {
     pub(super) ttl_timer_task: TaskSlot,
     pub(super) run_complete_notify: runtime::Notify,
     pub(super) release_lock: runtime::Mutex<()>,
+    pub(super) release_finished: AtomicBool,
+    pub(super) release_error: runtime::Mutex<Option<String>>,
     pub(super) config: LocalQueueConfig,
     pub(super) database: Database,
     pub(super) schema: Schema,
@@ -106,6 +108,7 @@ pub(super) struct LocalQueueState {
     pub(super) claim_coordinator: Arc<ClaimCoordinator>,
     pub(super) accepted_tracker: Arc<AcceptedWorkTracker>,
     pub(super) poll_interval: Duration,
+    pub(super) shutdown_grace_period: Duration,
     pub(super) continuous: bool,
     pub(super) hooks: Arc<HookRegistry>,
 }
@@ -126,6 +129,8 @@ impl LocalQueueState {
             ttl_timer_task: TaskSlot::empty("local_queue_ttl"),
             run_complete_notify: runtime::Notify::new(),
             release_lock: runtime::Mutex::new(()),
+            release_finished: AtomicBool::new(false),
+            release_error: runtime::Mutex::new(None),
             config: params.config,
             database: params.database,
             schema: params.schema,
@@ -133,6 +138,7 @@ impl LocalQueueState {
             claim_coordinator: params.claim_coordinator,
             accepted_tracker: Arc::new(AcceptedWorkTracker::default()),
             poll_interval: params.poll_interval,
+            shutdown_grace_period: params.shutdown_grace_period,
             continuous: params.continuous,
             hooks: params.hooks,
         }
