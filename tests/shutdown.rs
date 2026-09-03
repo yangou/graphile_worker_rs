@@ -158,3 +158,102 @@ async fn request_shutdown_still_works_with_pending_custom_signal() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn request_shutdown_cancels_a_direct_claim_waiting_on_worker_control() {
+    #[derive(Serialize, Deserialize)]
+    struct BlockedClaimJob;
+
+    impl TaskHandler for BlockedClaimJob {
+        const IDENTIFIER: &'static str = "blocked_direct_claim_job";
+
+        async fn run(self, _ctx: WorkerContext) -> impl IntoTaskHandlerResult {}
+    }
+
+    with_test_db(|test_db| async move {
+        let utils = test_db.worker_utils();
+        utils.migrate().await.expect("Failed to migrate");
+        utils
+            .add_job(BlockedClaimJob, JobSpec::default())
+            .await
+            .expect("Failed to add job");
+
+        let worker = Arc::new(
+            Worker::options()
+                .database(test_db.database.clone())
+                .concurrency(1)
+                .listen_os_shutdown_signals(false)
+                .define_job::<BlockedClaimJob>()
+                .init()
+                .await
+                .expect("Failed to create worker"),
+        );
+
+        let mut blocker = test_db
+            .test_pool
+            .begin()
+            .await
+            .expect("Failed to begin worker-control blocker");
+        sqlx::query(
+            "UPDATE graphile_worker._private_worker_control SET paused = paused WHERE id = true",
+        )
+        .execute(&mut *blocker)
+        .await
+        .expect("Failed to lock worker-control row");
+
+        let mut worker_handle = spawn_local({
+            let worker = worker.clone();
+            async move { worker.run().await }
+        });
+
+        let wait_start = Instant::now();
+        loop {
+            let blocked_claims: i64 = sqlx::query_scalar(
+                r#"
+                    SELECT count(*)
+                    FROM pg_stat_activity
+                    WHERE datname = current_database()
+                      AND wait_event_type = 'Lock'
+                      AND query LIKE '%_private_worker_control%for share%'
+                "#,
+            )
+            .fetch_one(&test_db.test_pool)
+            .await
+            .expect("Failed to inspect blocked direct claim");
+            if blocked_claims > 0 {
+                break;
+            }
+            if wait_start.elapsed() > Duration::from_secs(5) {
+                panic!("Direct claim did not block on worker control");
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        worker.request_shutdown();
+        let shutdown_finished = tokio::time::timeout(Duration::from_secs(2), &mut worker_handle)
+            .await
+            .is_ok();
+
+        blocker
+            .rollback()
+            .await
+            .expect("Failed to release worker-control blocker");
+        if !worker_handle.is_finished() {
+            tokio::time::timeout(Duration::from_secs(2), worker_handle)
+                .await
+                .expect("Worker did not finish after releasing blocker")
+                .expect("Worker task panicked")
+                .expect("Worker run failed");
+        }
+
+        assert!(
+            shutdown_finished,
+            "Direct-mode shutdown must cancel an in-flight claim blocked on worker control"
+        );
+
+        let jobs = test_db.get_jobs().await;
+        assert_eq!(jobs.len(), 1);
+        assert!(jobs[0].locked_by.is_none());
+    })
+    .await;
+}
