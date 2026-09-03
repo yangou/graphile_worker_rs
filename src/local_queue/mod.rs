@@ -82,7 +82,9 @@ impl AcceptedWorkTracker {
     pub(crate) fn persisted(&self, count: usize) {
         let previous = self.count.fetch_sub(count, Ordering::SeqCst);
         debug_assert!(previous >= count, "accepted-work count underflow");
-        self.capacity_notify.notify_waiters();
+        // One fetch coordinator waits for capacity. Retain a permit when it has
+        // not registered yet so the final completion cannot strand a backlog.
+        self.capacity_notify.notify_one();
     }
 
     pub(crate) fn free_capacity(&self, limit: usize) -> usize {

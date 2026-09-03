@@ -87,10 +87,15 @@ impl LocalQueue {
 
         self.set_refetch_delay_active(false);
         self.0.refetch_delay.abort_notify.notify_waiters();
-        self.0.state_notify.notify_waiters();
+        self.0.state_notify.notify_one();
 
         self.0.ttl_timer_task.abort();
         self.0.refetch_delay_task.abort();
+
+        // A claim that was already in flight is allowed to commit. Wait for
+        // the fetch loop to observe Released and finish caching that result,
+        // then return the complete cache in one bounded batch.
+        self.0.run_complete_notify.notified().await;
 
         debug!("LocalQueue releasing, returning jobs to database");
 
@@ -114,8 +119,6 @@ impl LocalQueue {
                 })
                 .await;
         }
-
-        self.0.run_complete_notify.notified().await;
 
         Ok(())
     }

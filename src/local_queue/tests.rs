@@ -70,3 +70,17 @@ fn local_queue_config_validation_rejects_invalid_values() {
         Err(LocalQueueConfigError::RefetchDelayExceedsPollInterval { .. })
     ));
 }
+
+#[tokio::test]
+async fn capacity_release_retains_a_wakeup_for_the_fetch_coordinator() {
+    let tracker = AcceptedWorkTracker::default();
+    tracker.accepted(1);
+    tracker.persisted(1);
+
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        tracker.capacity_notify.notified(),
+    )
+    .await
+    .expect("capacity release before waiter registration must retain a wakeup");
+}
