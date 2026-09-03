@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- remove the superseded `get_job` and `batch_get_jobs` modules
+- **Breaking:** remove the superseded `get_job` and `batch_get_jobs` modules
 
 ## [0.1.2](https://github.com/leo91000/graphile_worker_rs/compare/graphile_worker_queries-v0.1.1...graphile_worker_queries-v0.1.2) - 2026-07-19
 

@@ -8,7 +8,7 @@
 
 ### Changed
 
-- remove the lower-level `get_job` and `batch_get_jobs` query modules; workers now claim through the queue-safe coordinator
+- **Breaking:** remove the lower-level `get_job` and `batch_get_jobs` query modules; workers now claim through the queue-safe coordinator
 
 ## [0.13.5](https://github.com/leo91000/graphile_worker_rs/compare/graphile_worker-v0.13.4...graphile_worker-v0.13.5) - 2026-07-19
 
@@ -1372,7 +1372,6 @@
 * wip: first attempts at crontab_runner ([4c59b2e](https://github.com/leo91000/archimedes/commit/4c59b2e))
 * wip: attempt at nom parsing crontab ([c48e972](https://github.com/leo91000/archimedes/commit/c48e972))
 * wip: dynamic fn map ([8464613](https://github.com/leo91000/archimedes/commit/8464613))
-
 
 
 
