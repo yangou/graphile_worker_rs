@@ -4,7 +4,7 @@
 
 ### Added
 
-- add task-scoped batch claiming, process-local dispatch queues, batched persistence, and atomic worker pause control
+- add task-scoped batch claiming, process-local dispatch queues, batched persistence, and pre-wave worker pause control
 
 ### Changed
 
@@ -1374,6 +1374,5 @@
 * wip: first attempts at crontab_runner ([4c59b2e](https://github.com/leo91000/archimedes/commit/4c59b2e))
 * wip: attempt at nom parsing crontab ([c48e972](https://github.com/leo91000/archimedes/commit/c48e972))
 * wip: dynamic fn map ([8464613](https://github.com/leo91000/archimedes/commit/8464613))
-
 
 

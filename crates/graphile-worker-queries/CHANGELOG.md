@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- add task-scoped, queue-safe batch claims and atomic worker pause reads
+- add task-scoped, queue-safe batch claims and pre-wave worker pause reads
 
 ### Removed
 

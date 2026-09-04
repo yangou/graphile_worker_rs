@@ -53,7 +53,7 @@ async fn sqlx_pool_exercises_get_and_fail_helpers() {
         let skip_flags = vec!["blocked".to_string()];
         let first_tx = test_db.database.begin().await.expect("begin first claim");
         assert!(
-            !lock_worker_control(&first_tx, graphile_worker::Schema::default())
+            !read_worker_control(&first_tx, graphile_worker::Schema::default())
                 .await
                 .expect("read claim control")
                 .paused
@@ -91,7 +91,7 @@ async fn sqlx_pool_exercises_get_and_fail_helpers() {
 
         let second_tx = test_db.database.begin().await.expect("begin second claim");
         assert!(
-            !lock_worker_control(&second_tx, graphile_worker::Schema::default())
+            !read_worker_control(&second_tx, graphile_worker::Schema::default())
                 .await
                 .expect("read claim control")
                 .paused

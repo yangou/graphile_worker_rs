@@ -4,7 +4,7 @@ use chrono::Utc;
 use graphile_worker::sql::add_job::batch::add_jobs;
 use graphile_worker::sql::add_job::single::add_job;
 use graphile_worker::sql::add_job::types::JobToAdd;
-use graphile_worker::sql::claim_queue_jobs::{claim_queue_jobs, lock_worker_control};
+use graphile_worker::sql::claim_queue_jobs::{claim_queue_jobs, read_worker_control};
 use graphile_worker::sql::fail_job::batch::{fail_jobs, FailedJob};
 use graphile_worker::sql::task_identifiers::get_tasks_details;
 use graphile_worker::{DbExecutorArg, DbParams, DbValue, JobKeyMode, JobSpec, JobSpecBuilder};

@@ -11,18 +11,20 @@ pub struct WorkerControlState {
     pub pause_reason: Option<String>,
 }
 
-/// Locks and reads the singleton worker-control row for one claim wave.
+/// Reads the singleton worker-control row before one claim wave.
 ///
 /// A missing row is an error, so callers fail closed rather than claiming
-/// without the pause handshake.
-pub async fn lock_worker_control(
+/// without observing pause. This is deliberately a plain snapshot read: a
+/// concurrent pause may race with the following bounded claim and admit one
+/// final wave, which callers finish normally.
+pub async fn read_worker_control(
     mut executor: impl DbExecutorArg,
     schema: impl Into<Schema>,
 ) -> Result<WorkerControlState> {
     let worker_control = schema.into().private_table("worker_control");
     let row = executor
         .fetch_one(
-            &format!("select paused, pause_reason from {worker_control} where id = true for share"),
+            &format!("select paused, pause_reason from {worker_control} where id = true"),
             Vec::<DbValue>::new().into(),
         )
         .await?;
@@ -42,7 +44,7 @@ pub struct QueueClaim {
 
 /// Claims up to `quota` jobs for exactly one task identifier.
 ///
-/// The caller owns the transaction and the process-wide pause-row lock. This
+/// The caller owns the claim transaction after observing pause separately. This
 /// function performs a bounded loose-index walk over at most `2 * quota`
 /// ordering rows, locks ordering rows before jobs, and returns at most one job
 /// per non-null ordering key.

@@ -5,7 +5,7 @@ use chrono::Utc;
 use futures::FutureExt;
 use graphile_worker_database::{Database, Schema};
 use graphile_worker_job::Job;
-use graphile_worker_queries::claim_queue_jobs::{claim_queue_jobs, lock_worker_control};
+use graphile_worker_queries::claim_queue_jobs::{claim_queue_jobs, read_worker_control};
 use graphile_worker_queries::errors::Result;
 use graphile_worker_queries::task_identifiers::SharedTaskDetails;
 use graphile_worker_runtime as runtime;
@@ -127,23 +127,24 @@ impl ClaimCoordinator {
 
         let mut state = self.state.lock().await;
         let allocation = allocate_quotas(tasks.len(), capacity, state.queue_rotation);
-        let tx = self.database.begin().await?;
         let control = if let Some(shutdown) = shutdown {
-            let lock_control = lock_worker_control(&tx, self.schema.clone()).fuse();
+            let read_control = read_worker_control(&self.database, self.schema.clone()).fuse();
             let shutdown = shutdown.fuse();
-            futures::pin_mut!(lock_control, shutdown);
+            futures::pin_mut!(read_control, shutdown);
             futures::select_biased! {
-                result = lock_control => result?,
+                result = read_control => result?,
                 _ = shutdown => return Ok(None),
             }
         } else {
-            lock_worker_control(&tx, self.schema.clone()).await?
+            read_worker_control(&self.database, self.schema.clone()).await?
         };
         if control.paused {
-            tx.commit().await?;
             return Ok(Some(ClaimWave::Paused));
         }
 
+        // Pause observation and claim are intentionally not atomic. If pause changes here, this
+        // one bounded wave is still accepted and completed normally; the next wave observes it.
+        let tx = self.database.begin().await?;
         let now = self.use_local_time.then(Utc::now);
         let mut claimed = Vec::with_capacity(allocation.len());
         let mut next_cursors = Vec::with_capacity(allocation.len());

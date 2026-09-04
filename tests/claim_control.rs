@@ -2,7 +2,7 @@
 
 use chrono::Utc;
 use graphile_worker::sql::claim_queue_jobs::{
-    claim_queue_jobs, claim_queue_jobs_sql, lock_worker_control, QueueClaim,
+    claim_queue_jobs, claim_queue_jobs_sql, read_worker_control, QueueClaim,
 };
 use graphile_worker::sql::complete_job::complete_job;
 use graphile_worker::sql::task_identifiers::get_tasks_details;
@@ -24,17 +24,16 @@ async fn claim_committed(
     cursor: Option<i32>,
     now: Option<chrono::DateTime<Utc>>,
 ) -> QueueClaim {
-    let tx = test_db.database.begin().await.expect("begin claim wave");
-    let control = lock_worker_control(&tx, Schema::default())
+    let control = read_worker_control(&test_db.database, Schema::default())
         .await
         .expect("read claim control");
     if control.paused {
-        tx.commit().await.expect("commit paused claim wave");
         return QueueClaim {
             jobs: Vec::new(),
             next_ordering_cursor: cursor,
         };
     }
+    let tx = test_db.database.begin().await.expect("begin claim wave");
     let claimed = claim_queue_jobs(
         &tx,
         Schema::default(),
@@ -78,7 +77,7 @@ async fn queue_claim_commit_releases_job_for_completion() {
 
         let tx = test_db.database.begin().await.expect("begin claim");
         assert!(
-            !lock_worker_control(&tx, Schema::default())
+            !read_worker_control(&tx, Schema::default())
                 .await
                 .expect("read pause control")
                 .paused
@@ -171,7 +170,7 @@ async fn queue_scoped_claim_locks_ordering_rows_before_jobs() {
             .await
             .expect("Failed to begin claim wave");
         assert!(
-            !lock_worker_control(&claim_tx, Schema::default())
+            !read_worker_control(&claim_tx, Schema::default())
                 .await
                 .expect("Failed to read pause control")
                 .paused
@@ -237,7 +236,7 @@ async fn same_ordering_key_excludes_claims_across_task_queues() {
 
         let first_tx = test_db.database.begin().await.expect("begin first wave");
         assert!(
-            !lock_worker_control(&first_tx, Schema::default())
+            !read_worker_control(&first_tx, Schema::default())
                 .await
                 .expect("read first control")
                 .paused
@@ -259,7 +258,7 @@ async fn same_ordering_key_excludes_claims_across_task_queues() {
 
         let second_tx = test_db.database.begin().await.expect("begin second wave");
         assert!(
-            !lock_worker_control(&second_tx, Schema::default())
+            !read_worker_control(&second_tx, Schema::default())
                 .await
                 .expect("read second control")
                 .paused
@@ -546,7 +545,7 @@ async fn batch_claim_locks_only_named_queues_it_can_return() {
             .await
             .expect("Failed to begin first claim transaction");
         assert!(
-            !lock_worker_control(&mut first_tx, Schema::default())
+            !read_worker_control(&mut first_tx, Schema::default())
                 .await
                 .expect("Failed to read pause control")
                 .paused
@@ -692,7 +691,7 @@ async fn mixed_claim_does_not_lock_discarded_unkeyed_candidates() {
 
         let claim_tx = test_db.database.begin().await.expect("begin mixed claim");
         assert!(
-            !lock_worker_control(&claim_tx, Schema::default())
+            !read_worker_control(&claim_tx, Schema::default())
                 .await
                 .expect("read pause control")
                 .paused
@@ -736,7 +735,7 @@ async fn mixed_claim_does_not_lock_discarded_unkeyed_candidates() {
 }
 
 #[tokio::test]
-async fn pause_and_claim_share_one_atomic_row_lock_handshake() {
+async fn pause_race_allows_one_final_bounded_claim_wave() {
     with_test_db(|test_db| async move {
         let utils = test_db.worker_utils();
         utils.migrate().await.expect("Failed to migrate");
@@ -758,7 +757,7 @@ async fn pause_and_claim_share_one_atomic_row_lock_handshake() {
             .begin()
             .await
             .expect("Failed to begin claim transaction");
-        assert!(!lock_worker_control(&claim_tx, Schema::default())
+        assert!(!read_worker_control(&claim_tx, Schema::default())
             .await
             .expect("Failed to read pause control")
             .paused);
@@ -778,45 +777,21 @@ async fn pause_and_claim_share_one_atomic_row_lock_handshake() {
         .expect("Failed to claim job");
         assert_eq!(claimed.jobs.len(), 1);
 
-        let mut pause_tx = test_db
-            .test_pool
-            .begin()
-            .await
-            .expect("Failed to begin pause transaction");
-        sqlx::query("SET LOCAL lock_timeout = '100ms'")
-            .execute(&mut *pause_tx)
-            .await
-            .expect("Failed to set lock timeout");
-        let error = sqlx::query(
-            "UPDATE graphile_worker._private_worker_control SET paused = true, pause_reason = 'test_transition', updated_at = now() WHERE id = true",
-        )
-        .execute(&mut *pause_tx)
-        .await
-        .expect_err("Pause must wait for a claim transaction that passed the gate");
-        assert_eq!(
-            error.as_database_error().and_then(|error| error.code()),
-            Some(std::borrow::Cow::Borrowed("55P03"))
-        );
-        pause_tx
-            .rollback()
-            .await
-            .expect("Failed to roll back blocked pause");
-
-        drop(claim_tx);
-
         sqlx::query(
             "UPDATE graphile_worker._private_worker_control SET paused = true, pause_reason = 'test_transition', updated_at = now() WHERE id = true",
         )
         .execute(&test_db.test_pool)
         .await
-        .expect("Failed to pause after claim completed");
+        .expect("pause does not wait for the independent claim transaction");
+        claim_tx
+            .commit()
+            .await
+            .expect("the already accepted final wave still commits");
 
-        let paused_tx = test_db.database.begin().await.expect("begin paused wave");
-        let control = lock_worker_control(&paused_tx, Schema::default())
+        let control = read_worker_control(&test_db.database, Schema::default())
             .await
             .expect("Paused control row remains readable");
         assert!(control.paused);
-        paused_tx.commit().await.expect("commit paused wave");
     })
     .await;
 }
@@ -838,7 +813,7 @@ async fn missing_pause_control_row_fails_closed() {
             .expect("Failed to remove control row");
 
         let tx = test_db.database.begin().await.expect("begin claim wave");
-        lock_worker_control(&tx, Schema::default())
+        read_worker_control(&tx, Schema::default())
             .await
             .expect_err("Missing control row must fail the claim wave closed");
         drop(tx);

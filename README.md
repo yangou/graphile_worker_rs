@@ -103,7 +103,7 @@ and
 - Worker utilities for adding, rescheduling, completing, failing, cleaning up,
   and recovering jobs.
 - Optional queue-safe local batching for reducing database round trips.
-- Database-wide claim pause with an atomic pause/claim row-lock handshake.
+- Database-wide claim pause observed once before each bounded claim wave.
 - Graceful shutdown and optional heartbeat-based dead-worker recovery.
 - Lifecycle hooks for logging, metrics, validation, and custom policies.
 - CLI and admin UI crates for operational workflows.

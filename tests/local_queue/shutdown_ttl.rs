@@ -1,5 +1,4 @@
 use super::*;
-use sqlx::Acquire;
 
 #[tokio::test]
 async fn local_queue_returns_jobs_on_shutdown() {
@@ -227,88 +226,6 @@ async fn local_queue_release_waits_for_run_loop() {
         assert!(
             worker_fut.is_finished(),
             "Worker future should be finished after shutdown"
-        );
-    })
-    .await;
-}
-
-#[tokio::test]
-async fn shutdown_bounds_an_in_flight_claim_by_the_grace_period() {
-    with_test_db(|test_db| async move {
-        let utils = test_db.worker_utils();
-        utils.migrate().await.expect("Failed to migrate");
-        utils
-            .add_job(ReleaseWaitsJob { id: 1 }, JobSpec::default())
-            .await
-            .expect("Failed to add job");
-
-        let mut blocker = test_db
-            .test_pool
-            .begin()
-            .await
-            .expect("Failed to begin worker-control blocker");
-        sqlx::query(
-            "UPDATE graphile_worker._private_worker_control SET paused = paused WHERE id = true",
-        )
-        .execute(&mut *blocker)
-        .await
-        .expect("Failed to lock worker-control row");
-
-        let worker = Arc::new(
-            Worker::options()
-                .database(test_db.database.clone())
-                .concurrency(1)
-                .local_queue(LocalQueueConfig::builder().size(1).build())
-                .listen_os_shutdown_signals(false)
-                .shutdown_grace_period(Duration::from_millis(100))
-                .define_job::<ReleaseWaitsJob>()
-                .init()
-                .await
-                .expect("Failed to create worker"),
-        );
-        let worker_for_run = Arc::clone(&worker);
-        let worker_fut = spawn_local(async move { worker_for_run.run().await });
-
-        let wait_start = Instant::now();
-        loop {
-            let blocked_claims: i64 = sqlx::query_scalar(
-                r#"
-                    SELECT count(*)
-                    FROM pg_stat_activity
-                    WHERE datname = current_database()
-                      AND wait_event_type = 'Lock'
-                      AND query LIKE '%_private_worker_control%for share%'
-                "#,
-            )
-            .fetch_one(&test_db.test_pool)
-            .await
-            .expect("Failed to inspect blocked claim");
-            if blocked_claims > 0 {
-                break;
-            }
-            if wait_start.elapsed() > Duration::from_secs(5) {
-                panic!("LocalQueue claim did not block on worker control");
-            }
-            sleep(Duration::from_millis(20)).await;
-        }
-
-        worker.request_shutdown();
-        tokio::time::timeout(Duration::from_secs(2), worker_fut)
-            .await
-            .expect("Worker shutdown exceeded its grace period on an in-flight claim")
-            .expect("Worker task failed")
-            .expect("Worker returned an error");
-
-        blocker
-            .commit()
-            .await
-            .expect("Failed to release claim blocker");
-
-        let jobs = test_db.get_jobs().await;
-        assert_eq!(jobs.len(), 1);
-        assert!(
-            jobs[0].locked_by.is_none(),
-            "the post-shutdown claim must be returned instead of cached"
         );
     })
     .await;
