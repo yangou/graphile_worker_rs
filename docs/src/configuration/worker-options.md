@@ -230,10 +230,11 @@ operations are available through `WorkerUtilsWithExecutor`, so callers may
 include the state change in their own transaction.
 
 Pause gates claims only. Adding jobs and managing existing rows remain
-available. A claim wave takes a shared lock on the control row before locking
-jobs in the same short transaction, so a successful pause waits for
-already-started claim transactions and prevents later claims from passing the
-gate.
+available. The coordinator reads the control row once before opening each
+bounded claim transaction. If pause races with the following claim, that one
+final bounded wave may still be accepted and finishes normally; the next wave
+observes pause and fetches nothing. The pause read never locks the control row
+or joins the job-claim transaction.
 
 ## Hooks, plugins, and extensions
 
