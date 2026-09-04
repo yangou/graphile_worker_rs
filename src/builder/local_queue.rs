@@ -18,8 +18,9 @@ impl WorkerOptions {
     /// unclaimed jobs are returned to the database.
     ///
     /// One coordinator divides the process-wide `size` cap fairly across all
-    /// registered task identifiers. Forbidden flags remain part of the same
-    /// bounded claim path.
+    /// registered task identifiers. Workers with `forbidden_flags` bypass the
+    /// LocalQueue and fetch directly from the database; those direct fetches
+    /// still use the same bounded claim path.
     ///
     /// # Example
     /// ```
