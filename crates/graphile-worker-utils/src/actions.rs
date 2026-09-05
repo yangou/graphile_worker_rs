@@ -1,11 +1,93 @@
-use graphile_worker_database::{DbExecutorArg, DbValue};
+use graphile_worker_database::{DbExecutorArg, DbParams, DbRow, DbValue};
 use indoc::formatdoc;
 
 use super::client::WorkerUtils;
-use super::types::RescheduleJobOptions;
+use super::types::{RescheduleJobOptions, WorkerControlState, WorkerPauseUpdate};
 use graphile_worker_job::DbJob;
 use graphile_worker_queries::errors::GraphileWorkerError;
 use graphile_worker_queries::schema_names::WorkerFunction;
+
+pub(super) async fn worker_control_state(
+    utils: &WorkerUtils,
+    mut executor: impl DbExecutorArg,
+) -> Result<WorkerControlState, GraphileWorkerError> {
+    let worker_control = utils.schema.private_table("worker_control");
+    let sql = formatdoc!(
+        r#"
+            select paused, pause_reason, updated_at
+            from {worker_control}
+            where id = true;
+        "#
+    );
+    let row = executor.fetch_one(&sql, DbParams::new()).await?;
+    worker_control_state_from_row(&row, "paused", "pause_reason", "updated_at")
+}
+
+pub(super) async fn set_worker_pause(
+    utils: &WorkerUtils,
+    mut executor: impl DbExecutorArg,
+    pause_reason: Option<&str>,
+) -> Result<WorkerPauseUpdate, GraphileWorkerError> {
+    let worker_control = utils.schema.private_table("worker_control");
+    let sql = formatdoc!(
+        r#"
+            with previous as materialized (
+                select paused, pause_reason, updated_at
+                from {worker_control}
+                where id = true
+                for update
+            ),
+            updated as (
+                update {worker_control} as worker_control
+                set
+                    paused = $1::text is not null,
+                    pause_reason = $1::text,
+                    updated_at = case
+                        when worker_control.pause_reason is distinct from $1::text then now()
+                        else worker_control.updated_at
+                    end
+                from previous
+                where worker_control.id = true
+                returning
+                    previous.paused as previous_paused,
+                    previous.pause_reason as previous_pause_reason,
+                    previous.updated_at as previous_updated_at,
+                    worker_control.paused,
+                    worker_control.pause_reason,
+                    worker_control.updated_at
+            )
+            select * from updated;
+        "#
+    );
+    let row = executor
+        .fetch_one(
+            &sql,
+            vec![DbValue::TextOpt(pause_reason.map(str::to_string))].into(),
+        )
+        .await?;
+    Ok(WorkerPauseUpdate {
+        previous: worker_control_state_from_row(
+            &row,
+            "previous_paused",
+            "previous_pause_reason",
+            "previous_updated_at",
+        )?,
+        current: worker_control_state_from_row(&row, "paused", "pause_reason", "updated_at")?,
+    })
+}
+
+fn worker_control_state_from_row(
+    row: &DbRow,
+    paused: &str,
+    pause_reason: &str,
+    updated_at: &str,
+) -> Result<WorkerControlState, GraphileWorkerError> {
+    Ok(WorkerControlState {
+        paused: row.try_get(paused)?,
+        pause_reason: row.try_get(pause_reason)?,
+        updated_at: row.try_get(updated_at)?,
+    })
+}
 
 pub(super) async fn remove_job(
     utils: &WorkerUtils,

@@ -80,7 +80,7 @@ impl WorkerOptions {
     {
         for job in jobs {
             let (identifier, worker_fn) = job.into_parts();
-            self.jobs.insert(identifier.to_string(), worker_fn);
+            self.jobs.insert(identifier, worker_fn);
         }
 
         self

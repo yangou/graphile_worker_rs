@@ -11,6 +11,7 @@ use graphile_worker_recovery::WorkerRecoveryConfig;
 use graphile_worker_runtime as runtime;
 use graphile_worker_shutdown_signal::ShutdownSignal;
 
+use crate::claim_coordinator::ClaimCoordinator;
 use crate::WorkerShutdownConfig;
 use graphile_worker_queries::task_identifiers::SharedTaskDetails;
 
@@ -49,6 +50,8 @@ pub struct Worker {
     pub(crate) schema: Schema,
     /// Mapping of task IDs to their string identifiers
     pub(crate) task_details: SharedTaskDetails,
+    #[getset(skip)]
+    pub(crate) claim_coordinator: Arc<ClaimCoordinator>,
     /// List of job flags that this worker will not process
     pub(crate) forbidden_flags: Vec<String>,
     /// List of cron job definitions to be scheduled
@@ -86,12 +89,13 @@ pub(crate) struct WorkerRunner {
     pub(crate) database: Database,
     pub(crate) schema: Schema,
     pub(crate) task_details: SharedTaskDetails,
-    pub(crate) forbidden_flags: Vec<String>,
+    pub(crate) claim_coordinator: Arc<ClaimCoordinator>,
     pub(crate) use_local_time: bool,
     pub(crate) shutdown_signal: ShutdownSignal,
     pub(crate) extensions: ReadOnlyExtensions,
     pub(crate) hooks: Arc<HookRegistry>,
     pub(crate) completion_batcher: Option<Arc<crate::batcher::CompletionBatcher>>,
     pub(crate) failure_batcher: Option<Arc<crate::batcher::FailureBatcher>>,
+    pub(crate) accepted_tracker: Option<Arc<crate::local_queue::AcceptedWorkTracker>>,
     pub(crate) shutdown_config: WorkerShutdownConfig,
 }

@@ -97,6 +97,21 @@ impl TaskSlot {
             }
         }
     }
+
+    pub(crate) async fn abort_and_stop(&self) {
+        let handle = self.handle.lock().expect("task slot poisoned").take();
+        let Some(handle) = handle else {
+            return;
+        };
+
+        handle.abort_handle().abort();
+        match handle.await {
+            Ok(()) | Err(runtime::JoinError::Aborted) => {}
+            Err(error) => {
+                warn!(task = self.name, error = %error, "Background task failed during shutdown")
+            }
+        }
+    }
 }
 
 impl Drop for TaskSlot {
@@ -143,6 +158,23 @@ mod tests {
         }));
 
         tasks.stop().await;
+
+        assert!(!completed.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn task_slot_abort_and_stop_joins_the_cancelled_task() {
+        let completed = Arc::new(AtomicBool::new(false));
+        let completed_for_task = completed.clone();
+        let slot = TaskSlot::new(
+            "test_abort_slot",
+            runtime::spawn(async move {
+                runtime::sleep(Duration::from_secs(60)).await;
+                completed_for_task.store(true, Ordering::SeqCst);
+            }),
+        );
+
+        slot.abort_and_stop().await;
 
         assert!(!completed.load(Ordering::SeqCst));
     }

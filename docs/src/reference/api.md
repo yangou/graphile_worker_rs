@@ -350,5 +350,5 @@ most applications use them through `graphile_worker` re-exports:
 - [`graphile_worker_job`](https://docs.rs/graphile_worker_job/) - `Job`, `JobBuilder`, `DbJob`, and `DbJobData`.
 - [`graphile_worker_job_spec`](https://docs.rs/graphile_worker_job_spec/) - `JobSpec`, `JobSpecBuilder`, and `JobKeyMode`.
 - [`graphile_worker_task_details`](https://docs.rs/graphile_worker_task_details/) - `TaskDetails` and `SharedTaskDetails`.
-- [`graphile_worker_queries`](https://docs.rs/graphile_worker_queries/) - lower-level query modules such as `add_job`, `get_job`, `complete_job`, `fail_job`, `return_jobs`, `recover_workers`, `task_identifiers`, and `worker_heartbeat`.
+- [`graphile_worker_queries`](https://docs.rs/graphile_worker_queries/) - lower-level query modules such as `add_job`, `claim_queue_jobs`, `complete_job`, `fail_job`, `return_jobs`, `recover_workers`, `task_identifiers`, and `worker_heartbeat`.
 - [`graphile_worker_utils`](https://docs.rs/graphile_worker_utils/) - `WorkerUtils`, `client`, and `types`.

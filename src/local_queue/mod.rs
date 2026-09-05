@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,7 +10,7 @@ use graphile_worker_shutdown_signal::ShutdownSignal;
 use thiserror::Error;
 use tracing::warn;
 
-use graphile_worker_queries::task_identifiers::SharedTaskDetails;
+use crate::claim_coordinator::ClaimCoordinator;
 
 mod cache;
 mod config;
@@ -59,13 +60,41 @@ pub struct LocalQueueParams {
     pub database: Database,
     pub schema: Schema,
     pub worker_id: String,
-    pub task_details: SharedTaskDetails,
+    pub(crate) claim_coordinator: Arc<ClaimCoordinator>,
     pub poll_interval: Duration,
     pub continuous: bool,
     pub shutdown_signal: Option<ShutdownSignal>,
+    pub shutdown_grace_period: Duration,
     pub hooks: Arc<HookRegistry>,
     pub job_signal_sender: LocalQueueSignalSender,
-    pub use_local_time: bool,
+}
+
+#[derive(Default)]
+pub(crate) struct AcceptedWorkTracker {
+    count: AtomicUsize,
+    capacity_notify: runtime::Notify,
+}
+
+impl AcceptedWorkTracker {
+    pub(crate) fn accepted(&self, count: usize) {
+        self.count.fetch_add(count, Ordering::SeqCst);
+    }
+
+    pub(crate) fn settled(&self, count: usize) {
+        // Capacity tracks work still owned by this process, not whether the
+        // final database write succeeded. Once a request is terminal locally,
+        // failed persistence is left to stale-lock recovery and must not wedge
+        // the process's fetch budget forever.
+        let previous = self.count.fetch_sub(count, Ordering::SeqCst);
+        debug_assert!(previous >= count, "accepted-work count underflow");
+        // One fetch coordinator waits for capacity. Retain a permit when it has
+        // not registered yet so the final completion cannot strand a backlog.
+        self.capacity_notify.notify_one();
+    }
+
+    pub(crate) fn free_capacity(&self, limit: usize) -> usize {
+        limit.saturating_sub(self.count.load(Ordering::SeqCst))
+    }
 }
 
 impl LocalQueue {
@@ -96,6 +125,10 @@ impl LocalQueue {
         }
 
         queue
+    }
+
+    pub(crate) fn accepted_tracker(&self) -> Arc<AcceptedWorkTracker> {
+        self.0.accepted_tracker.clone()
     }
 
     async fn run(&self) {

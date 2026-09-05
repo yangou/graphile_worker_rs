@@ -1,19 +1,39 @@
-use graphile_worker_job::Job;
 use graphile_worker_lifecycle_hooks::LocalQueueMode;
 use graphile_worker_runtime as runtime;
 use tracing::trace;
 
 use super::LocalQueue;
+use crate::claim_coordinator::QueueJobs;
 
 impl LocalQueue {
-    pub(super) async fn received_jobs(&self, jobs: Vec<Job>, fetched_max: bool) {
-        let job_count = jobs.len();
-        {
-            let mut job_queue = self.0.job_queue.lock().await;
-            job_queue.extend(jobs);
-        }
+    pub(super) async fn received_jobs(&self, queues: Vec<QueueJobs>, fetched_max: bool) {
+        let job_count = queues.iter().map(|queue| queue.jobs.len()).sum::<usize>();
+        self.0.accepted_tracker.accepted(job_count);
 
-        self.set_mode(LocalQueueMode::Waiting).await;
+        // Admission and its visible mode are one state change. Otherwise a
+        // worker can consume the final admitted job between the buffer write
+        // and the Waiting transition, leaving an empty queue asleep forever.
+        let mut mode = self.0.mode.write().await;
+        let old_mode = *mode;
+        let mut buffers = self.0.job_queues.lock().await;
+        for queue in queues {
+            buffers.push(queue.identifier, queue.jobs);
+        }
+        let became_waiting =
+            old_mode != LocalQueueMode::Released && old_mode != LocalQueueMode::Waiting;
+        if became_waiting {
+            *mode = LocalQueueMode::Waiting;
+        }
+        drop(buffers);
+        drop(mode);
+
+        if became_waiting {
+            self.emit_mode_transition(old_mode, LocalQueueMode::Waiting)
+                .await;
+        }
+        if old_mode == LocalQueueMode::Released {
+            return;
+        }
         self.start_ttl_timer().await;
 
         trace!(job_count, "Jobs added to cache, signaling stream");

@@ -22,7 +22,7 @@ impl Worker {
     }
 
     async fn run_job_sources(&self) -> Result<(), WorkerRuntimeError> {
-        let local_queue = self.create_local_queues();
+        let local_queue = self.create_local_queue();
         let job_runner = self.job_runner_internal(local_queue);
         let crontab_scheduler = self.crontab_scheduler();
 

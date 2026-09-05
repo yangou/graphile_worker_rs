@@ -25,6 +25,31 @@ pub fn db_job_from_row(row: &DbRow) -> core::result::Result<DbJob, DbError> {
     }))
 }
 
+pub fn db_job_from_nullable_row(row: &DbRow) -> core::result::Result<Option<DbJob>, DbError> {
+    let Some(id) = row.try_get::<Option<i64>>("id")? else {
+        return Ok(None);
+    };
+
+    Ok(Some(DbJob::from_data(DbJobData {
+        id,
+        job_queue_id: row.try_get("job_queue_id")?,
+        payload: row.try_get("payload")?,
+        priority: row.try_get("priority")?,
+        run_at: row.try_get::<DateTime<Utc>>("run_at")?,
+        attempts: row.try_get("attempts")?,
+        max_attempts: row.try_get("max_attempts")?,
+        last_error: row.try_get("last_error")?,
+        created_at: row.try_get::<DateTime<Utc>>("created_at")?,
+        updated_at: row.try_get::<DateTime<Utc>>("updated_at")?,
+        key: row.try_get("key")?,
+        revision: row.try_get("revision")?,
+        locked_at: row.try_get("locked_at")?,
+        locked_by: row.try_get("locked_by")?,
+        flags: row.try_get("flags")?,
+        task_id: row.try_get("task_id")?,
+    })))
+}
+
 pub(crate) fn collect_column<T>(rows: &[DbRow], column: &str) -> WorkerResult<Vec<T>>
 where
     T: FromDbCell,

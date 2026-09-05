@@ -69,4 +69,10 @@ fn task_handler_definition_exposes_identifier() {
         JobDefinition::of::<OtherBuilderJob>().identifier(),
         "other_builder_job"
     );
+    assert_eq!(
+        JobDefinition::of::<OtherBuilderJob>()
+            .with_identifier("runtime_queue")
+            .identifier(),
+        "runtime_queue"
+    );
 }

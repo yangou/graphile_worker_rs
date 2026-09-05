@@ -84,3 +84,49 @@ async fn it_should_run_jobs() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn paused_worker_leaves_available_jobs_unclaimed() {
+    static PAUSED_JOB_CALL_COUNT: StaticCounter = StaticCounter::new();
+
+    #[derive(Serialize, Deserialize)]
+    struct PausedJob;
+
+    impl TaskHandler for PausedJob {
+        const IDENTIFIER: &'static str = "paused_run_once_job";
+
+        async fn run(self, _ctx: WorkerContext) -> impl IntoTaskHandlerResult {
+            PAUSED_JOB_CALL_COUNT.increment().await;
+        }
+    }
+
+    helpers::with_test_db(|test_db| async move {
+        let worker = test_db
+            .create_worker_options()
+            .define_job::<PausedJob>()
+            .init()
+            .await
+            .expect("Failed to create worker");
+        let utils = worker.create_utils();
+        utils
+            .add_raw_job(PausedJob::IDENTIFIER, json!({}), JobSpec::default())
+            .await
+            .expect("Failed to add job");
+        utils
+            .set_worker_pause(Some("test_transition"))
+            .await
+            .expect("Failed to pause claims");
+
+        worker
+            .run_once()
+            .await
+            .expect("Paused run_once must stop cleanly");
+
+        assert_eq!(PAUSED_JOB_CALL_COUNT.get().await, 0);
+        let jobs = test_db.get_jobs().await;
+        assert_eq!(jobs.len(), 1);
+        assert!(jobs[0].locked_at.is_none());
+        assert!(jobs[0].locked_by.is_none());
+    })
+    .await;
+}

@@ -31,21 +31,6 @@ impl TaskHandler for BatchJob {
 }
 
 #[derive(Serialize, Deserialize)]
-pub(super) struct MultiLocalQueueJob {
-    pub(super) id: u32,
-}
-
-pub(super) static MULTI_LOCAL_QUEUE_CALL_COUNT: StaticCounter = StaticCounter::new();
-
-impl TaskHandler for MultiLocalQueueJob {
-    const IDENTIFIER: &'static str = "multi_local_queue_job";
-
-    async fn run(self, _ctx: WorkerContext) -> impl IntoTaskHandlerResult {
-        MULTI_LOCAL_QUEUE_CALL_COUNT.increment().await;
-    }
-}
-
-#[derive(Serialize, Deserialize)]
 pub(super) struct FlaggedJob {
     pub(super) id: u32,
 }

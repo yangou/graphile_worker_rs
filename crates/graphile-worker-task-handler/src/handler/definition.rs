@@ -14,7 +14,7 @@ use super::task::TaskHandler;
 /// values, so applications can register a collection of jobs in one call.
 #[derive(Clone)]
 pub struct JobDefinition {
-    identifier: &'static str,
+    identifier: String,
     handler: TaskHandlerFn,
 }
 
@@ -28,7 +28,7 @@ impl JobDefinition {
         };
 
         Self {
-            identifier: T::IDENTIFIER,
+            identifier: T::IDENTIFIER.to_string(),
             handler: Arc::new(handler),
         }
     }
@@ -42,14 +42,24 @@ impl JobDefinition {
         };
 
         Self {
-            identifier: T::IDENTIFIER,
+            identifier: T::IDENTIFIER.to_string(),
             handler: Arc::new(handler),
         }
     }
 
+    /// Replaces the static handler identifier with a runtime-composed one.
+    ///
+    /// The handler and payload type stay unchanged. This lets applications
+    /// register a typed execution boundary under an identifier contributed by
+    /// their runtime registry.
+    pub fn with_identifier(mut self, identifier: impl Into<String>) -> Self {
+        self.identifier = identifier.into();
+        self
+    }
+
     /// The identifier handled by this definition.
-    pub fn identifier(&self) -> &'static str {
-        self.identifier
+    pub fn identifier(&self) -> &str {
+        &self.identifier
     }
 
     /// The type-erased task handler function.
@@ -58,7 +68,7 @@ impl JobDefinition {
     }
 
     /// Splits this definition into the identifier and handler function.
-    pub fn into_parts(self) -> (&'static str, TaskHandlerFn) {
+    pub fn into_parts(self) -> (String, TaskHandlerFn) {
         (self.identifier, self.handler)
     }
 }

@@ -5,6 +5,7 @@ use graphile_worker_migrations::migrate;
 use rand::Rng;
 
 use crate::batcher::{CompletionBatcher, FailureBatcher};
+use crate::claim_coordinator::ClaimCoordinator;
 use crate::Worker;
 use graphile_worker_queries::task_identifiers::{get_tasks_details, SharedTaskDetails};
 
@@ -121,6 +122,14 @@ impl WorkerOptions {
         });
 
         let recovery_config = self.worker_recovery_config.unwrap_or_default();
+        let claim_coordinator = ClaimCoordinator::new(
+            database.clone(),
+            schema.clone(),
+            worker_id.clone(),
+            task_details.clone(),
+            self.forbidden_flags.clone(),
+            self.use_local_time,
+        );
 
         Ok(Worker {
             worker_id,
@@ -131,6 +140,7 @@ impl WorkerOptions {
             database,
             schema,
             task_details,
+            claim_coordinator,
             forbidden_flags: self.forbidden_flags,
             crontabs: self.crontabs.unwrap_or_default(),
             use_local_time: self.use_local_time,

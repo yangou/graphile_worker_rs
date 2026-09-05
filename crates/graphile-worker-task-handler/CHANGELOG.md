@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Breaking:** store `JobDefinition` identifiers as owned strings; `identifier` now returns `&str` and `into_parts` returns `String`
+
 ## [0.5.20](https://github.com/leo91000/graphile_worker_rs/compare/graphile_worker_task_handler-v0.5.19...graphile_worker_task_handler-v0.5.20) - 2026-07-19
 
 ### Fixed
@@ -168,6 +174,5 @@
 * feat: Make simple macro example working ([5ceb9b1](https://github.com/leo91000/archimedes/commit/5ceb9b1))
 * feat: Add task macro ([e5106f7](https://github.com/leo91000/archimedes/commit/e5106f7))
 * feat: Add task handler definitions ([3c38898](https://github.com/leo91000/archimedes/commit/3c38898))
-
 
 

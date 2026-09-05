@@ -18,6 +18,13 @@ impl TaskDetails {
         self.0.values().cloned().collect()
     }
 
+    pub fn entries(&self) -> Vec<(i32, String)> {
+        self.0
+            .iter()
+            .map(|(id, identifier)| (*id, identifier.clone()))
+            .collect()
+    }
+
     pub fn get(&self, id: &i32) -> Option<&String> {
         self.0.get(id)
     }

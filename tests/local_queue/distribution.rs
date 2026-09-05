@@ -8,3 +8,5 @@ mod forbidden_flags;
 mod mode_transitions;
 #[path = "distribution/run_once.rs"]
 mod run_once;
+#[path = "distribution/task_queues.rs"]
+mod task_queues;

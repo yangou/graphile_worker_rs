@@ -40,23 +40,19 @@ fn local_queue_config_builders_and_mutators() {
     let config = LocalQueueConfig::default()
         .with_size(7)
         .with_ttl(Duration::from_secs(3))
-        .with_refetch_delay(refetch_delay.clone())
-        .with_queue_count(3);
+        .with_refetch_delay(refetch_delay.clone());
     assert_eq!(config.size, 7);
     assert_eq!(config.ttl, Duration::from_secs(3));
     assert!(config.refetch_delay.is_some());
-    assert_eq!(config.queue_count, 3);
 
     let built_config = LocalQueueConfig::builder()
         .size(8)
         .ttl(Duration::from_secs(4))
         .refetch_delay(built_refetch_delay)
-        .queue_count(2)
         .build();
     assert_eq!(built_config.size, 8);
     assert_eq!(built_config.ttl, Duration::from_secs(4));
     assert!(built_config.refetch_delay.is_some());
-    assert_eq!(built_config.queue_count, 2);
 }
 
 #[test]
@@ -67,16 +63,24 @@ fn local_queue_config_validation_rejects_invalid_values() {
             .validate(Duration::from_secs(1)),
         Err(LocalQueueConfigError::EmptySize)
     );
-    assert_eq!(
-        LocalQueueConfig::default()
-            .with_queue_count(0)
-            .validate(Duration::from_secs(1)),
-        Err(LocalQueueConfigError::EmptyQueueCount)
-    );
     assert!(matches!(
         LocalQueueConfig::default()
             .with_refetch_delay(RefetchDelayConfig::default().with_duration(Duration::from_secs(2)))
             .validate(Duration::from_secs(1)),
         Err(LocalQueueConfigError::RefetchDelayExceedsPollInterval { .. })
     ));
+}
+
+#[tokio::test]
+async fn capacity_release_retains_a_wakeup_for_the_fetch_coordinator() {
+    let tracker = AcceptedWorkTracker::default();
+    tracker.accepted(1);
+    tracker.settled(1);
+
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        tracker.capacity_notify.notified(),
+    )
+    .await
+    .expect("capacity release before waiter registration must retain a wakeup");
 }

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- add task-scoped batch claiming, process-local dispatch queues, batched persistence, and pre-wave worker pause control
+
+### Changed
+
+- **Breaking:** remove the lower-level `get_job` and `batch_get_jobs` query modules; workers now claim through the queue-safe coordinator
+- **Breaking:** make local-queue capacity process-wide, remove `queue_count`, `with_queue_count`, and `EmptyQueueCount`, and remove the flags argument from `LocalQueue::get_job`; direct `LocalQueueParams` construction is now worker-owned
+- **Breaking:** store `JobDefinition` identifiers as owned strings so runtime-composed task queues can be registered; `identifier` now returns `&str` and `into_parts` returns `String`
+
 ## [0.13.5](https://github.com/leo91000/graphile_worker_rs/compare/graphile_worker-v0.13.4...graphile_worker-v0.13.5) - 2026-07-19
 
 ### Added
@@ -1362,9 +1374,5 @@
 * wip: first attempts at crontab_runner ([4c59b2e](https://github.com/leo91000/archimedes/commit/4c59b2e))
 * wip: attempt at nom parsing crontab ([c48e972](https://github.com/leo91000/archimedes/commit/c48e972))
 * wip: dynamic fn map ([8464613](https://github.com/leo91000/archimedes/commit/8464613))
-
-
-
-
 
 

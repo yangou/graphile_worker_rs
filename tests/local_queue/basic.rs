@@ -1,5 +1,7 @@
 use super::*;
 
+#[path = "basic/accepted_capacity.rs"]
+mod accepted_capacity;
 #[path = "basic/batch_fetch.rs"]
 mod batch_fetch;
 #[path = "basic/empty_queue.rs"]
